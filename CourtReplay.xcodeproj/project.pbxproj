@@ -1,0 +1,206 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXFileReference section */
+		100000000000000000000006 /* CourtReplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourtReplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		100000000000000000000018 /* CourtReplay.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CourtReplay.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		100000000000000000000004 /* PickleballReplay */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PickleballReplay;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		100000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		100000000000000000000003 = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000004 /* PickleballReplay */,
+				100000000000000000000016 /* Configuration */,
+				100000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		100000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000006 /* CourtReplay.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		100000000000000000000016 /* Configuration */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000017 /* Info.plist */,
+				100000000000000000000018 /* CourtReplay.xcconfig */,
+			);
+			path = Configuration;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000002 /* CourtReplay */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtReplay" */;
+			buildPhases = (
+				100000000000000000000007 /* Sources */,
+				100000000000000000000008 /* Frameworks */,
+				100000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				100000000000000000000004 /* PickleballReplay */,
+			);
+			name = CourtReplay;
+			productName = CourtReplay;
+			productReference = 100000000000000000000006 /* CourtReplay.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2720;
+				LastUpgradeCheck = 2720;
+				TargetAttributes = {
+					100000000000000000000002 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+				};
+			};
+			buildConfigurationList = 100000000000000000000010 /* Build configuration list for PBXProject "CourtReplay" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 100000000000000000000003;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 100000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				100000000000000000000002 /* CourtReplay */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		100000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		100000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		100000000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		100000000000000000000014 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 100000000000000000000018 /* CourtReplay.xcconfig */;
+			buildSettings = {
+				DEVELOPMENT_TEAM = 8A4DL788W9;
+				ENABLE_PREVIEWS = YES;
+			};
+			name = Debug;
+		};
+		100000000000000000000015 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 100000000000000000000018 /* CourtReplay.xcconfig */;
+			buildSettings = {
+				DEVELOPMENT_TEAM = 8A4DL788W9;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100000000000000000000010 /* Build configuration list for PBXProject "CourtReplay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000012 /* Debug */,
+				100000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtReplay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000014 /* Debug */,
+				100000000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 100000000000000000000001 /* Project object */;
+}
