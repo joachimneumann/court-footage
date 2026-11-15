@@ -11,9 +11,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		100000000000000000000006 /* CourtReplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourtReplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000006 /* CourtFootage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourtFootage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		100000000000000000000018 /* CourtReplay.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CourtReplay.xcconfig; sourceTree = "<group>"; };
+		100000000000000000000018 /* CourtFootage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CourtFootage.xcconfig; sourceTree = "<group>"; };
 		100000000000000000000019 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -49,7 +49,7 @@
 		100000000000000000000005 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				100000000000000000000006 /* CourtReplay.app */,
+				100000000000000000000006 /* CourtFootage.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -58,7 +58,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000017 /* Info.plist */,
-				100000000000000000000018 /* CourtReplay.xcconfig */,
+				100000000000000000000018 /* CourtFootage.xcconfig */,
 			);
 			path = Configuration;
 			sourceTree = "<group>";
@@ -66,9 +66,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		100000000000000000000002 /* CourtReplay */ = {
+		100000000000000000000002 /* CourtFootage */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtReplay" */;
+			buildConfigurationList = 100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtFootage" */;
 			buildPhases = (
 				100000000000000000000007 /* Sources */,
 				100000000000000000000008 /* Frameworks */,
@@ -81,9 +81,9 @@
 			fileSystemSynchronizedGroups = (
 				100000000000000000000004 /* PickleballReplay */,
 			);
-			name = CourtReplay;
-			productName = CourtReplay;
-			productReference = 100000000000000000000006 /* CourtReplay.app */;
+			name = CourtFootage;
+			productName = CourtFootage;
+			productReference = 100000000000000000000006 /* CourtFootage.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -101,7 +101,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 100000000000000000000010 /* Build configuration list for PBXProject "CourtReplay" */;
+			buildConfigurationList = 100000000000000000000010 /* Build configuration list for PBXProject "CourtFootage" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -115,7 +115,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				100000000000000000000002 /* CourtReplay */,
+				100000000000000000000002 /* CourtFootage */,
 			);
 		};
 /* End PBXProject section */
@@ -171,25 +171,27 @@
 		};
 		100000000000000000000014 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 100000000000000000000018 /* CourtReplay.xcconfig */;
+			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
 				DEVELOPMENT_TEAM = 8A4DL788W9;
 				ENABLE_PREVIEWS = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
 			};
 			name = Debug;
 		};
 		100000000000000000000015 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 100000000000000000000018 /* CourtReplay.xcconfig */;
+			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
 				DEVELOPMENT_TEAM = 8A4DL788W9;
+				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		100000000000000000000010 /* Build configuration list for PBXProject "CourtReplay" */ = {
+		100000000000000000000010 /* Build configuration list for PBXProject "CourtFootage" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				100000000000000000000012 /* Debug */,
@@ -198,7 +200,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtReplay" */ = {
+		100000000000000000000011 /* Build configuration list for PBXNativeTarget "CourtFootage" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				100000000000000000000014 /* Debug */,

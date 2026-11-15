@@ -7,10 +7,12 @@ import UIKit
 struct RecordingView: View {
     let model: RecordingModel
 
+    @AppStorage("hasShownTapToRecordHint") private var hasShownTapToRecordHint = false
     @State private var preview = PreviewReference()
     @State private var showingSettings = false
     @State private var replayToPlay: SavedReplay?
     @State private var showsSaveFeedback = false
+    @State private var showsTapToRecordHint = false
     @State private var saveRegionFlash: UUID?
     @State private var zoomAtPinchStart: Double?
     @State private var lastCameraControls: CameraControls?
@@ -40,7 +42,12 @@ struct RecordingView: View {
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
-            if !model.blockedRequiredPermissions.isEmpty {
+            if let replay = replayToPlay {
+                SavedReplayPlayer(replay: replay, model: model) {
+                    replayToPlay = nil
+                    model.finishReplayPlayback()
+                }
+            } else if !model.blockedRequiredPermissions.isEmpty {
                 RequiredPermissionsView(
                     permissions: model.blockedRequiredPermissions,
                     accent: courtGreen,
@@ -61,16 +68,6 @@ struct RecordingView: View {
                     .accessibilityAction(.escape, dismissReplay)
             } else {
                 cameraScreen
-            }
-        }
-        .accessibilityHidden(replayToPlay != nil)
-        .allowsHitTesting(replayToPlay == nil)
-        .overlay {
-            if let replay = replayToPlay {
-                SavedReplayPlayer(replay: replay, model: model) {
-                    replayToPlay = nil
-                    model.finishReplayPlayback()
-                }
             }
         }
         .preferredColorScheme(.dark)
@@ -122,43 +119,48 @@ struct RecordingView: View {
         GeometryReader { screen in
             let insets = screen.safeAreaInsets
             let viewport = previewSize(in: screen)
+            let region = frame.flatMap { saveRegion(in: viewport, fallbackFrame: $0) }
+
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                if let frame, let region = saveRegion(in: viewport, fallbackFrame: frame) {
+                if let frame, let region {
                     Image(decorative: frame, scale: 1)
                         .resizable()
                         .scaledToFill()
                         .frame(width: region.width, height: region.height)
                         .clipShape(saveRegionShape)
+                        .overlay { replayConfirmation.padding(12) }
                         .position(x: region.midX - insets.leading, y: region.midY - insets.top)
-
-                    ViewThatFits(in: .vertical) {
-                        replayCoverControls
-                            .padding(.top, max(0, region.maxY - insets.top + 4))
-
-                        replayCoverControls
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.black.opacity(0.8), in: .rect(cornerRadius: 14))
-                            .padding(.bottom, 8)
-                            .frame(maxHeight: .infinity, alignment: .bottom)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 } else {
-                    replayCoverControls
+                    replayConfirmation
+                }
+
+                if model.phase == .recording {
+                    let inset = bufferIndicatorHeight / 2 + 8
+                    let bottom = screen.size.height - inset
+                    let belowThumbnail = region.map { $0.maxY - insets.top + inset } ?? bottom
+                    let centerX = region.map { $0.midX - insets.leading } ?? screen.size.width / 2
+                    bufferIndicator
+                        .position(x: centerX, y: min(belowThumbnail, bottom))
+                        .allowsHitTesting(false)
                 }
             }
         }
     }
 
-    private var replayCoverControls: some View {
-        VStack(spacing: 16) {
-            openReplayButton
-            if model.phase == .recording {
-                bufferIndicator
-            }
+    private var replayConfirmation: some View {
+        VStack(spacing: 8) {
+            Text("Video saved.")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("replaySavedConfirmation")
+            playReplayButton
         }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.78), in: .rect(cornerRadius: 16))
     }
 
     private var cameraScreen: some View {
@@ -289,6 +291,13 @@ struct RecordingView: View {
                             }
                             .accessibilitySortPriority(2)
                             .accessibilityIdentifier("saveReplay")
+                            .overlay {
+                                if showsTapToRecordHint {
+                                    tapToRecordHint
+                                }
+                            }
+                            .onAppear(perform: showTapToRecordHintOnce)
+                            .onDisappear { showsTapToRecordHint = false }
                             .position(x: region.midX, y: region.midY)
                     }
                 }
@@ -340,7 +349,33 @@ struct RecordingView: View {
         .accessibilityHidden(true)
     }
 
+    private var tapToRecordHint: some View {
+        ZStack {
+            saveRegionShape.strokeBorder(courtGreen, lineWidth: 2)
+                .accessibilityHidden(true)
+
+            Text("Tap here to record")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.85), in: .rect(cornerRadius: 12))
+                .padding(12)
+                .accessibilityIdentifier("tapToRecordHint")
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func showTapToRecordHintOnce() {
+        guard !hasShownTapToRecordHint else { return }
+        hasShownTapToRecordHint = true
+        showsTapToRecordHint = true
+        AccessibilityNotification.Announcement("Double-tap Save replay to save recent footage.").post()
+    }
+
     private func saveFromPreview() {
+        showsTapToRecordHint = false
         saveRegionFlash = UUID()
         model.saveReplay()
     }
@@ -481,6 +516,7 @@ struct RecordingView: View {
 
     private var settingsGear: some View {
         Button {
+            showsTapToRecordHint = false
             showingSettings = true
         } label: {
             cameraControlIcon("gearshape")
@@ -491,11 +527,11 @@ struct RecordingView: View {
         .accessibilityIdentifier("recordingSettings")
     }
 
-    private var openReplayButton: some View {
+    private var playReplayButton: some View {
         Button {
             replayToPlay = model.openRecentReplay()
         } label: {
-            Text("Open…")
+            Text("Play…")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(courtGreen)
                 .padding(.horizontal, 16)
@@ -504,7 +540,7 @@ struct RecordingView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Plays the replay just added to Photos")
-        .accessibilityIdentifier("openSavedReplay")
+        .accessibilityIdentifier("playSavedReplay")
     }
 
     private func cameraControlIcon(_ symbol: String) -> some View {
@@ -754,7 +790,7 @@ private final class PreviewReference {
     private var lastVideoAspect: CGFloat?
 
     func refreshVideoAspect() {
-        guard let view, let video = videoRect(in: view.bounds.size) else { return }
+        guard let view, let video = measuredVideoRect(in: view.bounds.size) else { return }
         let aspect = video.width / video.height
         if lastVideoAspect.map({ abs($0 - aspect) > 0.001 }) ?? true {
             lastVideoAspect = aspect
@@ -770,6 +806,12 @@ private final class PreviewReference {
     }
 
     func videoRect(in size: CGSize) -> CGRect? {
+        // Observe the first usable frame so SwiftUI can reveal the tap area as the preview comes up.
+        guard lastVideoAspect != nil else { return nil }
+        return measuredVideoRect(in: size)
+    }
+
+    private func measuredVideoRect(in size: CGSize) -> CGRect? {
         guard let layer = view?.layer as? AVCaptureVideoPreviewLayer,
               layer.isPreviewing, !layer.bounds.isEmpty else { return nil }
         let bounds = layer.bounds

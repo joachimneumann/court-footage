@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CourtReplayApp: App {
+struct CourtFootageApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = RecordingModel()
 
