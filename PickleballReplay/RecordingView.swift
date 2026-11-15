@@ -930,6 +930,10 @@ private struct FootageSettingsView: View {
                         PrivacyView()
                     }
                     .accessibilityIdentifier("privacySettings")
+
+                    NavigationLink("About Court Footage") {
+                        AboutCourtFootageView()
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -1002,6 +1006,46 @@ private struct FootageSettingsView: View {
             .presentationSizing(.fitted)
             .presentationCompactAdaptation(.popover)
         }
+    }
+}
+
+private struct AboutCourtFootageView: View {
+    var body: some View {
+        Form {
+            Section {
+                NavigationLink("MIT License") {
+                    MITLicenseView()
+                }
+
+                if let repository = URL(string: "https://github.com/joachimneumann/court-footage") {
+                    Link("Source code on GitHub", destination: repository)
+                        .accessibilityHint("Opens in your browser")
+                }
+            }
+        }
+        .navigationTitle("About Court Footage")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct MITLicenseView: View {
+    var body: some View {
+        ScrollView {
+            Group {
+                if let url = Bundle.main.url(forResource: "LICENSE", withExtension: nil),
+                   let license = try? String(contentsOf: url, encoding: .utf8) {
+                    Text(verbatim: license)
+                        .textSelection(.enabled)
+                } else {
+                    Text("The bundled license could not be opened.")
+                }
+            }
+            .frame(maxWidth: 520, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle("MIT License")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
