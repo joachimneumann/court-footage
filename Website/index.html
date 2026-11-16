@@ -17,7 +17,8 @@
   <link rel="icon" type="image/png" href="/assets/app-icon.png">
   <link rel="apple-touch-icon" href="/assets/app-icon.png">
   <link rel="preload" href="/assets/barlow-condensed-bold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=replay-demo">
+  <script src="/replay-demo.js" defer></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -54,16 +55,29 @@
             <a class="text-link" href="https://github.com/joachimneumann/court-footage">Open source on GitHub <span aria-hidden="true">↗</span></a>
           </div>
         </div>
-        <figure class="camera-preview">
+        <figure class="camera-preview" data-replay-demo>
           <div class="phone phone-landscape">
-            <img src="/assets/camera.webp?v=2" alt="Court Footage live camera showing a pickleball rally, the tap-to-record area, and zoom controls" width="2622" height="1206" fetchpriority="high">
+            <div class="demo-stage">
+              <div class="demo-camera" data-demo-camera>
+                <img src="/assets/camera.webp?v=2" alt="Court Footage live camera showing a pickleball rally, the tap-to-record area, and zoom controls" width="2622" height="1206" fetchpriority="high">
+                <button class="demo-trigger" type="button" aria-label="Open the replay demo" aria-controls="replay-demo-screen" data-demo-trigger hidden></button>
+              </div>
+              <div class="demo-replay" id="replay-demo-screen" data-demo-replay hidden>
+                <img src="/assets/replay-court.webp" alt="Pickleball rally in the replay preview" width="1440" height="618" fetchpriority="low" decoding="async">
+                <p class="demo-replay-label">Replay preview</p>
+                <div class="demo-replay-actions">
+                  <button class="demo-replay-button" type="button" data-demo-play>Replay</button>
+                  <button type="button" data-demo-back>Back</button>
+                </div>
+              </div>
+            </div>
           </div>
         </figure>
       </div>
     </section>
     <section class="workflow container" id="how-it-works" aria-labelledby="workflow-title">
       <p class="eyebrow">How it works</p>
-      <h2 id="workflow-title">From point to replay.</h2>
+      <h2 id="workflow-title">Footage from your rallies</h2>
       <ol class="steps">
         <li>
           <h3>Set up courtside</h3>
