@@ -2,7 +2,61 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-typealias ReplayMediaSample = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
+enum ReplayMediaSample: @unchecked Sendable {
+    typealias Buffer = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
+
+    enum Timing {
+        case video(CMSampleTimingInfo, [CMSampleBuffer.PerSampleAttachmentsDictionary.Element])
+        case audio(start: CMTime, sampleCount: Int)
+    }
+
+    case memory(Buffer)
+    case disk(ReplayDiskStorage.Location, CMFormatDescription, Timing)
+
+    var formatDescription: CMFormatDescription? {
+        switch self {
+        case .memory(let buffer): buffer.formatDescription
+        case .disk(_, let format, _): format
+        }
+    }
+
+    func load(using reader: ReplayDiskStorage.Reader) throws -> Buffer {
+        switch self {
+        case .memory(let buffer):
+            return buffer
+        case .disk(let location, let format, let timing):
+            let payload = try reader.read(location)
+            var sample: CMSampleBuffer?
+            let status: OSStatus
+            switch timing {
+            case .video(var timing, let attachments):
+                var size = CMBlockBufferGetDataLength(payload)
+                status = CMSampleBufferCreateReady(
+                    allocator: nil, dataBuffer: payload, formatDescription: format,
+                    sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                    sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample
+                )
+                if status == noErr, let sample {
+                    for (key, value) in attachments { sample.sampleAttachments[0][key] = value }
+                }
+            case .audio(let start, let sampleCount):
+                status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                    allocator: nil, dataBuffer: payload, formatDescription: format,
+                    sampleCount: sampleCount, presentationTimeStamp: start,
+                    packetDescriptions: nil, sampleBufferOut: &sample
+                )
+            }
+            guard status == noErr, let sample else { throw CocoaError(.fileReadCorruptFile) }
+            return Self.own(sample)
+        }
+    }
+
+    // The caller owns the sample header and does not mutate it after handing it over.
+    static func own(_ sample: CMSampleBuffer) -> Buffer {
+        nonisolated(unsafe) let ownedSample = sample
+        return Buffer(unsafeBuffer: ownedSample)
+    }
+}
 
 struct ReplaySnapshot: @unchecked Sendable {
     let video: [ReplayMediaSample]
@@ -10,7 +64,7 @@ struct ReplaySnapshot: @unchecked Sendable {
     let start: CMTime
     let end: CMTime
     let rotation: CGAffineTransform
-    let retainedBytes: Int
+    let retainedMemoryBytes: Int
 
     var durationSeconds: Double { (end - start).seconds }
 }
@@ -29,10 +83,12 @@ final class ReplayBuffer: @unchecked Sendable {
     private static let audioByteLimit = 32 * 1_024 * 1_024
 
     private let lock = NSLock()
-    private var video: [Sample] = []
-    private var audio: [Sample] = []
+    private var video: ArraySlice<Sample> = []
+    private var audio: ArraySlice<Sample> = []
     private var videoBytes = 0
     private var audioBytes = 0
+    private var diskStorage: ReplayDiskStorage?
+    private var storageFailed = false
     private var settings = RecordingSettings()
     private var nextClipStart: CMTime?
 
@@ -53,14 +109,24 @@ final class ReplayBuffer: @unchecked Sendable {
         lock.withLock { playableRange?.end ?? .invalid }
     }
 
+    var didFailToStoreFootage: Bool {
+        lock.withLock { storageFailed }
+    }
+
     func reset() {
-        lock.withLock { removeAllSamples() }
+        lock.withLock {
+            removeAllSamples()
+            diskStorage = nil
+            storageFailed = false
+        }
     }
 
     func reset(settings: RecordingSettings) {
         lock.withLock {
             self.settings = settings
             removeAllSamples()
+            diskStorage = settings.usesDiskReplayBuffer ? ReplayDiskStorage() : nil
+            storageFailed = false
         }
     }
 
@@ -80,7 +146,7 @@ final class ReplayBuffer: @unchecked Sendable {
     func appendVideo(_ sample: CMSampleBuffer) {
         lock.withLock {
             let time = sample.presentationTimeStamp
-            guard time.isNumeric, sample.isValid, CMSampleBufferDataIsReady(sample),
+            guard !storageFailed, time.isNumeric, sample.isValid, CMSampleBufferDataIsReady(sample),
                   let payload = sample.dataBuffer else { return }
             let bytes = CMBlockBufferGetDataLength(payload)
             guard (1...Self.videoByteLimit).contains(bytes) else { return }
@@ -89,24 +155,19 @@ final class ReplayBuffer: @unchecked Sendable {
                 guard time > previous.start else { return }
                 if time - previous.end > Self.discontinuity ||
                     sample.formatDescription != previous.media.formatDescription {
-                    video.removeAll()
+                    video = []
                     videoBytes = 0
                 }
             }
 
             let isSync = Self.isSyncSample(sample)
             guard isSync || !video.isEmpty else { return }
-            // Keep an independent sample header and share VideoToolbox's encoded bytes.
-            var copy: CMSampleBuffer?
-            guard CMSampleBufferCreateCopy(allocator: nil, sampleBuffer: sample,
-                                           sampleBufferOut: &copy) == noErr,
-                  let copy else { return }
+            guard let media = storeVideo(sample, payload: payload, byteCount: bytes) else { return }
             let duration = sample.duration
             let frameDuration = duration.isNumeric && duration > .zero
                 ? duration : CMTime(value: 1, timescale: 30)
             let end = time + frameDuration
-            video.append(Sample(media: Self.freezeOwnedSample(copy),
-                                start: time, end: end, bytes: bytes, isSync: isSync))
+            video.append(Sample(media: media, start: time, end: end, bytes: bytes, isSync: isSync))
             videoBytes += bytes
             evictVideo(before: end - retentionDuration)
         }
@@ -115,7 +176,7 @@ final class ReplayBuffer: @unchecked Sendable {
     func appendAudio(_ sample: CMSampleBuffer) {
         lock.withLock {
             let time = sample.presentationTimeStamp
-            guard settings.audioEnabled, time.isNumeric, sample.isValid, CMSampleBufferDataIsReady(sample),
+            guard !storageFailed, settings.audioEnabled, time.isNumeric, sample.isValid, CMSampleBufferDataIsReady(sample),
                   let format = sample.formatDescription, let payload = sample.dataBuffer,
                   CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mFormatID
                     == kAudioFormatLinearPCM else { return }
@@ -125,28 +186,15 @@ final class ReplayBuffer: @unchecked Sendable {
             if let previous = audio.last {
                 guard time > previous.start else { return }
                 if time - previous.end > Self.discontinuity || format != previous.media.formatDescription {
-                    audio.removeAll()
+                    audio = []
                     audioBytes = 0
                 }
             }
 
-            // Capture can reuse its PCM memory. Copy it before keeping it for later exports.
-            var copiedPayload: CMBlockBuffer?
-            guard CMBlockBufferCreateContiguous(
-                allocator: nil, sourceBuffer: payload, blockAllocator: nil,
-                customBlockSource: nil, offsetToData: 0, dataLength: bytes,
-                flags: kCMBlockBufferAlwaysCopyDataFlag, blockBufferOut: &copiedPayload
-            ) == noErr, let copiedPayload else { return }
-            var copy: CMSampleBuffer?
-            guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-                allocator: nil, dataBuffer: copiedPayload, formatDescription: format,
-                sampleCount: sample.numSamples, presentationTimeStamp: time,
-                packetDescriptions: nil, sampleBufferOut: &copy
-            ) == noErr, let copy, copy.duration.isNumeric, copy.duration > .zero else { return }
-
-            let end = time + copy.duration
-            audio.append(Sample(media: Self.freezeOwnedSample(copy),
-                                start: time, end: end, bytes: bytes, isSync: true))
+            guard let stored = storeAudio(sample, payload: payload, format: format, byteCount: bytes),
+                  stored.duration.isNumeric, stored.duration > .zero else { return }
+            let end = time + stored.duration
+            audio.append(Sample(media: stored.media, start: time, end: end, bytes: bytes, isSync: true))
             audioBytes += bytes
             evictAudio(before: end - retentionDuration)
         }
@@ -164,11 +212,12 @@ final class ReplayBuffer: @unchecked Sendable {
             let audioSamples = audio.drop(while: { $0.end <= range.start })
                 .prefix(while: { $0.start < range.end })
             guard !videoSamples.isEmpty, !settings.audioEnabled || !audioSamples.isEmpty else { return nil }
-            let retainedBytes = videoSamples.reduce(0) { $0 + $1.bytes }
-                + audioSamples.reduce(0) { $0 + $1.bytes }
+            let retainedMemoryBytes = diskStorage == nil
+                ? videoSamples.reduce(0) { $0 + $1.bytes } + audioSamples.reduce(0) { $0 + $1.bytes }
+                : 0
             return ReplaySnapshot(video: videoSamples.map(\.media), audio: audioSamples.map(\.media),
                                   start: range.start, end: range.end, rotation: rotation,
-                                  retainedBytes: retainedBytes)
+                                  retainedMemoryBytes: retainedMemoryBytes)
         }
     }
 
@@ -196,34 +245,101 @@ final class ReplayBuffer: @unchecked Sendable {
 
     private func removeAllSamples() {
         nextClipStart = nil
-        video.removeAll()
-        audio.removeAll()
+        video = []
+        audio = []
         videoBytes = 0
         audioBytes = 0
     }
 
     private func evictVideo(before time: CMTime) {
         // Preserve the GOP spanning the cutoff so the very start remains decodable.
-        if let keep = video.lastIndex(where: { $0.isSync && $0.start <= time }), keep > 0 {
-            removeVideoPrefix(keep)
+        var first = video.startIndex
+        var last = video.endIndex
+        while first < last {
+            let middle = first + (last - first) / 2
+            if video[middle].start <= time {
+                first = middle + 1
+            } else {
+                last = middle
+            }
         }
-        while videoBytes > Self.videoByteLimit {
-            removeVideoPrefix(video.dropFirst().firstIndex(where: \.isSync) ?? video.endIndex)
+        if let keep = video[..<first].lastIndex(where: \.isSync) {
+            removeVideoPrefix(keep - video.startIndex)
+        }
+        while diskStorage == nil && videoBytes > Self.videoByteLimit {
+            let keep = video.dropFirst().firstIndex(where: \.isSync) ?? video.endIndex
+            removeVideoPrefix(keep - video.startIndex)
         }
     }
 
     private func removeVideoPrefix(_ count: Int) {
+        guard count > 0 else { return }
         videoBytes -= video.prefix(count).reduce(0) { $0 + $1.bytes }
         video.removeFirst(count)
+        // A slice avoids moving the whole buffer per frame. Compact occasionally
+        // to release the evicted samples and their temporary files.
+        if video.startIndex >= 1_024 || video.isEmpty { video = Array(video)[...] }
     }
 
     private func evictAudio(before time: CMTime) {
         var count = 0
-        while count < audio.count && (audio[count].end <= time || audioBytes > Self.audioByteLimit) {
-            audioBytes -= audio[count].bytes
+        for sample in audio {
+            guard sample.end <= time || (diskStorage == nil && audioBytes > Self.audioByteLimit) else { break }
+            audioBytes -= sample.bytes
             count += 1
         }
         audio.removeFirst(count)
+        if audio.startIndex >= 1_024 || audio.isEmpty { audio = Array(audio)[...] }
+    }
+
+    private func storeVideo(_ sample: CMSampleBuffer, payload: CMBlockBuffer, byteCount: Int) -> ReplayMediaSample? {
+        if let diskStorage {
+            // VideoToolbox delivers one encoded frame in each sample buffer.
+            guard sample.numSamples == 1, let format = sample.formatDescription,
+                  let timing = try? sample.sampleTimingInfo(at: 0),
+                  let location = store(payload, byteCount: byteCount, in: diskStorage) else { return nil }
+            let attachments = sample.sampleAttachments.first.map { Array($0) } ?? []
+            return .disk(location, format, .video(timing, attachments))
+        } else {
+            var copy: CMSampleBuffer?
+            guard CMSampleBufferCreateCopy(allocator: nil, sampleBuffer: sample,
+                                           sampleBufferOut: &copy) == noErr, let copy else { return nil }
+            return .memory(ReplayMediaSample.own(copy))
+        }
+    }
+
+    private func storeAudio(_ sample: CMSampleBuffer, payload: CMBlockBuffer, format: CMFormatDescription,
+                            byteCount: Int) -> (media: ReplayMediaSample, duration: CMTime)? {
+        let time = sample.presentationTimeStamp
+        if let diskStorage {
+            guard let location = store(payload, byteCount: byteCount, in: diskStorage) else { return nil }
+            return (.disk(location, format, .audio(start: time, sampleCount: sample.numSamples)), sample.duration)
+        }
+
+        // Capture can reuse its PCM memory. Copy it before keeping it for later exports.
+        var copiedPayload: CMBlockBuffer?
+        guard CMBlockBufferCreateContiguous(
+            allocator: nil, sourceBuffer: payload, blockAllocator: nil,
+            customBlockSource: nil, offsetToData: 0, dataLength: byteCount,
+            flags: kCMBlockBufferAlwaysCopyDataFlag, blockBufferOut: &copiedPayload
+        ) == noErr, let copiedPayload else { return nil }
+        var copy: CMSampleBuffer?
+        guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: nil, dataBuffer: copiedPayload, formatDescription: format,
+            sampleCount: sample.numSamples, presentationTimeStamp: time,
+            packetDescriptions: nil, sampleBufferOut: &copy
+        ) == noErr, let copy else { return nil }
+        return (.memory(ReplayMediaSample.own(copy)), copy.duration)
+    }
+
+    private func store(_ payload: CMBlockBuffer, byteCount: Int,
+                       in diskStorage: ReplayDiskStorage) -> ReplayDiskStorage.Location? {
+        do {
+            return try diskStorage.store(payload, byteCount: byteCount)
+        } catch {
+            storageFailed = true
+            return nil
+        }
     }
 
     private static func isSyncSample(_ sample: CMSampleBuffer) -> Bool {
@@ -232,10 +348,4 @@ final class ReplayBuffer: @unchecked Sendable {
         return attachments?.first?[kCMSampleAttachmentKey_NotSync as String] as? Bool != true
     }
 
-    private static func freezeOwnedSample(_ sample: CMSampleBuffer) -> ReplayMediaSample {
-        // Both callers create a new sample header through the Core Media out-parameter.
-        // They transfer it here without subsequent mutation.
-        nonisolated(unsafe) let ownedSample = sample
-        return ReplayMediaSample(unsafeBuffer: ownedSample)
-    }
 }

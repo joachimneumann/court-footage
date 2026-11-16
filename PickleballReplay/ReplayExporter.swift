@@ -42,7 +42,8 @@ enum ReplayExporter {
 
         let writer = try AVAssetWriter(url: url, fileType: .mov)
         writer.movieTimeScale = 60_000
-        writer.shouldOptimizeForNetworkUse = true
+        // Skip the extra pass to move the movie index to the front for large local replays.
+        writer.shouldOptimizeForNetworkUse = snapshot.retainedMemoryBytes > 0
 
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: nil,
                                        sourceFormatHint: videoFormat)
@@ -107,9 +108,10 @@ enum ReplayExporter {
         _ samples: [ReplayMediaSample], to receiver: sending AVAssetWriterInput.SampleBufferReceiver
     ) async throws {
         defer { receiver.finish() }
+        let reader = ReplayDiskStorage.Reader()
         for sample in samples {
             try Task.checkCancellation()
-            try await receiver.append(sample)
+            try await receiver.append(sample.load(using: reader))
         }
     }
 }

@@ -25,7 +25,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Court Footage starts recording when you open the app so you can save recent play as a clip.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Court Footage records court sounds when the app opens and Audio is on.</string>
+	<string>Microphone access is optional. Allow it to include court sound in replays. Without access, Court Footage records silent replays.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Court Footage adds the clips you choose to save to your photo library.</string>
 	<key>ReplayPrivacyPolicyURL</key>

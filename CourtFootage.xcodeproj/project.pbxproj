@@ -173,6 +173,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
+				CURRENT_PROJECT_VERSION = "2 ti";
 				DEVELOPMENT_TEAM = 8A4DL788W9;
 				ENABLE_PREVIEWS = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
@@ -183,6 +184,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
+				CURRENT_PROJECT_VERSION = "2 ti";
 				DEVELOPMENT_TEAM = 8A4DL788W9;
 				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
 			};

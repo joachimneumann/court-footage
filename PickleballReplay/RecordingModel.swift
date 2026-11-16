@@ -6,6 +6,7 @@ import UIKit
 struct SavedReplay: Identifiable {
     let url: URL
     let thumbnail: CGImage?
+    let durationSeconds: Double
     var id: URL { url }
 }
 
@@ -22,11 +23,12 @@ final class RecordingModel {
     private(set) var saveCount = 0
     private(set) var cameraControls: CameraControls?
     private(set) var permissionPrompt: RecordingPermissionPrompt?
-    private(set) var blockedCapturePermission: RecordingPermission?
     private(set) var blockedRequiredPermissions: [RecordingPermission] = []
     private(set) var recentReplay: SavedReplay?
+    private(set) var replaySecondsRemaining = 0
     var isSaving: Bool { saveCount > 0 }
     var isBufferFull: Bool { availableSeconds.isFinite && availableSeconds >= Double(activeSettings.clipDuration) }
+    var canSaveReplay: Bool { phase == .recording && !isSaving && recentReplay == nil }
 
     var settings: RecordingSettings {
         didSet {
@@ -34,6 +36,18 @@ final class RecordingModel {
         }
     }
     private(set) var activeSettings: RecordingSettings
+
+    private var microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
+    var canEnableAudio: Bool {
+        microphoneAuthorization == .authorized || microphoneAuthorization == .notDetermined
+    }
+    var audioEnabledInSettings: Bool { settings.audioEnabled && canEnableAudio }
+
+    private var requestedRecordingSettings: RecordingSettings {
+        var requested = settings
+        requested.audioEnabled = audioEnabledInSettings
+        return requested
+    }
 
     let demoMode: Bool
 
@@ -54,6 +68,12 @@ final class RecordingModel {
     private struct Tap {
         let time: CMTime
         let deadline: ContinuousClock.Instant
+        let showsThumbnail: Bool
+    }
+
+    private struct QueuedReplay {
+        let snapshot: ReplaySnapshot
+        let showsThumbnail: Bool
     }
 
     private struct PermissionExplanation {
@@ -71,11 +91,12 @@ final class RecordingModel {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
+    @ObservationIgnored private var replayDismissTask: Task<Void, Never>?
     @ObservationIgnored private var exportTask: Task<Void, Never>?
     @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var pendingTaps: [Tap] = []
-    @ObservationIgnored private var snapshots: [ReplaySnapshot] = []
-    @ObservationIgnored private var retainedExportBytes = 0
+    @ObservationIgnored private var queuedReplays: [QueuedReplay] = []
+    @ObservationIgnored private var retainedExportMemoryBytes = 0
     @ObservationIgnored private var rotation: CGAffineTransform = .identity
     @ObservationIgnored private var foregroundOrientation: UIInterfaceOrientation?
     @ObservationIgnored private var cameraFacing: CameraFacing = .back
@@ -99,9 +120,11 @@ final class RecordingModel {
 
         // A previous run can have been terminated before its temporary export was removed.
         try? FileManager.default.removeItem(at: Self.exportDirectory)
+        ReplayDiskStorage.removeTemporaryFiles()
     }
 
     func startWhenActive(orientation: UIInterfaceOrientation) {
+        microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
         let enteredForeground = foregroundOrientation == nil
         foregroundOrientation = orientation
         guard enteredForeground || (phase == .interrupted && recoveryTask == nil) else { return }
@@ -111,9 +134,8 @@ final class RecordingModel {
     private func start(facing: CameraFacing) {
         guard foregroundOrientation != nil,
               phase == .idle || phase == .interrupted else { return }
-        dismissPermissionPrompt()
-        let sessionSettings = settings
-        activeSettings = sessionSettings
+        let requested = requestedRecordingSettings
+        activeSettings = requested
         phase = .starting
         availableSeconds = 0
         status = nil
@@ -124,14 +146,17 @@ final class RecordingModel {
         startTask = Task {
             await previousStop?.value
             guard !Task.isCancelled else { return }
-            buffer.reset(settings: sessionSettings)
-
             do {
                 if !demoMode {
-                    try await authorizeCapture(audioEnabled: sessionSettings.audioEnabled)
+                    try await authorizeCapture(audioEnabled: requested.audioEnabled)
                     try Task.checkCancellation()
-                    blockedCapturePermission = nil
                     guard let orientation = foregroundOrientation else { return }
+
+                    microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
+                    var sessionSettings = requested
+                    sessionSettings.audioEnabled = requested.audioEnabled && microphoneAuthorization == .authorized
+                    activeSettings = sessionSettings
+                    buffer.reset(settings: sessionSettings)
                     try await capture.start(orientation: orientation, settings: sessionSettings, facing: facing)
                     try Task.checkCancellation()
                     rotation = capture.captureRotation
@@ -156,18 +181,12 @@ final class RecordingModel {
                 phase = .idle
                 status = error.localizedDescription
                 cameraControls = nil
-                if let permission = error as? RecordingPermission {
-                    if blockedCapturePermission != permission {
-                        permissionPrompt = .denied(permission)
-                    }
-                    blockedCapturePermission = permission
-                }
             }
         }
     }
 
     func applyRecordingSettingsIfNeeded() {
-        guard settings != activeSettings, foregroundOrientation != nil else { return }
+        guard requestedRecordingSettings != activeSettings, foregroundOrientation != nil else { return }
         if phase == .recording || phase == .starting {
             finishCapture(interrupted: false)
         }
@@ -221,19 +240,13 @@ final class RecordingModel {
         explanation.continuation.resume()
     }
 
-    func dismissPermissionPrompt() {
-        if case .denied = permissionPrompt { permissionPrompt = nil }
-    }
-
     func openPermissionSettings() {
-        dismissPermissionPrompt()
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
     }
 
     private func showRequiredPermissionRecovery(_ denial: RequiredPermissionsDenied) {
         phase = .idle
-        blockedCapturePermission = nil
         blockedRequiredPermissions = denial.permissions
         status = nil
     }
@@ -271,8 +284,8 @@ final class RecordingModel {
         try Task.checkCancellation()
     }
 
-    func saveReplay() {
-        guard phase == .recording, !isSaving, recentReplay == nil else { return }
+    func saveReplay(showsThumbnail: Bool = true) {
+        guard canSaveReplay else { return }
         if demoMode {
             guard availableSeconds > 0 else {
                 status = Self.noFootageMessage
@@ -293,7 +306,7 @@ final class RecordingModel {
 
         status = nil
         saveCount += 1
-        pendingTaps.append(Tap(time: end, deadline: clock.now + .milliseconds(180)))
+        pendingTaps.append(Tap(time: end, deadline: clock.now + .milliseconds(180), showsThumbnail: showsThumbnail))
         preparePendingSaves()
     }
 
@@ -319,6 +332,22 @@ final class RecordingModel {
     private func offerRecentReplay(_ replay: SavedReplay) {
         discardRecentReplay()
         recentReplay = replay
+        beginNextClip()
+
+        let countdownSeconds = 10
+        let startedAt = clock.now
+        replaySecondsRemaining = countdownSeconds
+        replayDismissTask = Task { [weak self, clock] in
+            for elapsed in 1...countdownSeconds {
+                try? await clock.sleep(until: startedAt + .seconds(elapsed))
+                guard let self, !Task.isCancelled else { return }
+                replaySecondsRemaining = countdownSeconds - elapsed
+            }
+            self?.dismissRecentReplay(id: replay.id)
+        }
+    }
+
+    private func beginNextClip() {
         availableSeconds = 0
         if phase == .recording {
             buffer.beginNextClip(at: capture.tapTime())
@@ -328,7 +357,10 @@ final class RecordingModel {
 
     private func discardRecentReplay() {
         guard let replay = recentReplay else { return }
+        replayDismissTask?.cancel()
+        replayDismissTask = nil
         recentReplay = nil
+        replaySecondsRemaining = 0
         if playingReplay?.url != replay.url {
             try? FileManager.default.removeItem(at: replay.url)
         }
@@ -339,6 +371,11 @@ final class RecordingModel {
         let startTime = clock.now
         progressTask = Task {
             while !Task.isCancelled, phase == .recording {
+                if buffer.didFailToStoreFootage {
+                    finishCapture(interrupted: false)
+                    status = "Couldn’t store the replay buffer. Free up storage or choose a shorter clip."
+                    return
+                }
                 if demoMode {
                     let elapsed = startTime.duration(to: clock.now).components
                     let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
@@ -346,9 +383,6 @@ final class RecordingModel {
                 } else {
                     availableSeconds = buffer.availableSeconds(endingAt: clipEnd(at: capture.tapTime()))
                     preparePendingSaves()
-                }
-                if isBufferFull {
-                    discardRecentReplay()
                 }
                 try? await Task.sleep(for: .milliseconds(50))
             }
@@ -407,20 +441,19 @@ final class RecordingModel {
                 continue
             }
 
-            // Snapshots share media with the ring. Count their full sizes anyway to bound
-            // memory even if the exporter falls behind and their time ranges stop overlapping.
+            // Count memory-backed samples even if the exporter holds them after eviction.
             let maximumExportBytes = 256 * 1_024 * 1_024
-            guard retainedExportBytes + snapshot.retainedBytes <= maximumExportBytes else {
+            guard retainedExportMemoryBytes + snapshot.retainedMemoryBytes <= maximumExportBytes else {
                 saveCount -= 1
                 status = "Photos is still saving clips. Try again in a moment."
                 continue
             }
 
-            retainedExportBytes += snapshot.retainedBytes
-            snapshots.append(snapshot)
+            retainedExportMemoryBytes += snapshot.retainedMemoryBytes
+            queuedReplays.append(QueuedReplay(snapshot: snapshot, showsThumbnail: tap.showsThumbnail))
         }
 
-        guard !snapshots.isEmpty, exportTask == nil else { return }
+        guard !queuedReplays.isEmpty, exportTask == nil else { return }
         exportTask = Task { await exportQueuedClips() }
     }
 
@@ -436,17 +469,23 @@ final class RecordingModel {
             exportTask = nil
         }
 
-        while !snapshots.isEmpty {
-            let clip = snapshots.removeFirst()
+        while !queuedReplays.isEmpty {
+            let replay = queuedReplays.removeFirst()
             defer {
-                retainedExportBytes -= clip.retainedBytes
+                retainedExportMemoryBytes -= replay.snapshot.retainedMemoryBytes
                 saveCount -= 1
             }
 
             do {
                 try Task.checkCancellation()
-                let replay = try await saveToPhotos(clip)
-                offerRecentReplay(replay)
+                let saved = try await saveToPhotos(replay.snapshot, showsThumbnail: replay.showsThumbnail)
+                if replay.showsThumbnail {
+                    offerRecentReplay(saved)
+                } else {
+                    try? FileManager.default.removeItem(at: saved.url)
+                    beginNextClip()
+                    status = "Saved to Photos"
+                }
             } catch let denial as RequiredPermissionsDenied {
                 if phase == .recording || phase == .starting {
                     finishCapture(interrupted: false)
@@ -468,7 +507,7 @@ final class RecordingModel {
         FileManager.default.temporaryDirectory.appending(path: "CourtReplayExports", directoryHint: .isDirectory)
     }
 
-    private func saveToPhotos(_ clip: ReplaySnapshot) async throws -> SavedReplay {
+    private func saveToPhotos(_ clip: ReplaySnapshot, showsThumbnail: Bool) async throws -> SavedReplay {
         try Self.requireRecordingAndPhotosAccess()
         try Task.checkCancellation()
 
@@ -479,17 +518,17 @@ final class RecordingModel {
             try await ReplayExporter.write(clip, to: url)
             try Task.checkCancellation()
             try Self.requireRecordingAndPhotosAccess()
-            async let thumbnail = ReplayExporter.firstFrame(in: url)
+            async let thumbnail = showsThumbnail ? ReplayExporter.firstFrame(in: url) : nil
             // PhotoKit runs its change block off the main actor.
             try await PHPhotoLibrary.shared().performChanges { @Sendable in
                 let asset = PHAssetCreationRequest.forAsset()
                 let options = PHAssetResourceCreationOptions()
-                // Keep this exact export available for immediate playback in the app.
+                // Keep the export until the recording model handles playback or cleanup.
                 options.shouldMoveFile = false
                 options.originalFilename = "Court Footage.mov"
                 asset.addResource(with: .video, fileURL: url, options: options)
             }
-            return SavedReplay(url: url, thumbnail: await thumbnail)
+            return SavedReplay(url: url, thumbnail: await thumbnail, durationSeconds: clip.durationSeconds)
         } catch {
             try? FileManager.default.removeItem(at: url)
             try Self.requireRecordingAndPhotosAccess()
@@ -503,14 +542,13 @@ final class RecordingModel {
         #else
         let camera = AVCaptureDevice.authorizationStatus(for: .video)
         let photos = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        let microphone = audioEnabled ? AVCaptureDevice.authorizationStatus(for: .audio) : .authorized
         let needsCamera = camera == .notDetermined
         let needsPhotos = photos == .notDetermined
-        let needsMicrophone = microphone == .notDetermined
+        let needsMicrophone = audioEnabled && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
             && (camera == .authorized || needsCamera) && (photos == .authorized || needsPhotos)
 
         if needsCamera || needsPhotos || needsMicrophone {
-            try await requestPermission(explaining: .explainStartup(
+            try await requestPermission(explaining: RecordingPermissionPrompt(
                 camera: needsCamera, microphone: needsMicrophone, photos: needsPhotos
             )) {
                 if needsCamera {
@@ -529,9 +567,6 @@ final class RecordingModel {
             }
         }
         try Self.requireRecordingAndPhotosAccess()
-        if audioEnabled && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
-            throw RecordingPermission.microphone
-        }
         #endif
     }
 

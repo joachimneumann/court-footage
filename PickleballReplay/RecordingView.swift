@@ -3,16 +3,18 @@ import AVKit
 import Observation
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 struct RecordingView: View {
     let model: RecordingModel
 
-    @AppStorage("hasShownTapToRecordHint") private var hasShownTapToRecordHint = false
+    @AppStorage("dimPreviewWhenReady") private var dimsScreen = false
     @State private var preview = PreviewReference()
+    @State private var screenDimmer = RecordingScreenDimmer()
+    @State private var dimmingWasInterrupted = false
     @State private var showingSettings = false
     @State private var replayToPlay: SavedReplay?
     @State private var showsSaveFeedback = false
-    @State private var showsTapToRecordHint = false
     @State private var saveRegionFlash: UUID?
     @State private var zoomAtPinchStart: Double?
     @State private var lastCameraControls: CameraControls?
@@ -30,10 +32,14 @@ struct RecordingView: View {
     private let zoomCapsulePadding: CGFloat = 3
     private let cameraColumnWidth: CGFloat = 50
     private let cameraColumnPadding: CGFloat = 6
-    private let bufferIndicatorHeight: CGFloat = 22
 
     private var isExpandedDisplay: Bool {
         horizontalSizeClass == .regular && verticalSizeClass == .regular
+    }
+
+    private var shouldDimScreen: Bool {
+        dimsScreen && !dimmingWasInterrupted && model.isBufferFull && model.phase == .recording
+            && scenePhase == .active && !showingSettings && replayToPlay == nil && model.recentReplay == nil
     }
 
     var body: some View {
@@ -43,7 +49,7 @@ struct RecordingView: View {
                 .accessibilityHidden(true)
 
             if let replay = replayToPlay {
-                SavedReplayPlayer(replay: replay, model: model) {
+                SavedReplayPlayer(replay: replay, model: model, preview: preview) {
                     replayToPlay = nil
                     model.finishReplayPlayback()
                 }
@@ -58,28 +64,38 @@ struct RecordingView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                 }
-            } else if let replay = model.recentReplay, model.phase != .idle {
-                let dismissReplay = { model.dismissRecentReplay(id: replay.id) }
-                replayCover(frame: replay.thumbnail)
-                    .overlay(alignment: .topTrailing) {
-                        replayCloseButton("closeReplayThumbnail", action: dismissReplay)
-                            .padding(16)
-                    }
-                    .accessibilityAction(.escape, dismissReplay)
+            } else if let replay = model.recentReplay, model.phase != .idle, saveRegionFlash == nil {
+                replayCover(replay)
+                    .accessibilityAction(.escape) { model.dismissRecentReplay(id: replay.id) }
             } else {
-                cameraScreen
+                cameraWithAccessory
             }
         }
+        .background { Color.black.ignoresSafeArea() }
         .preferredColorScheme(.dark)
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
             startOnActivePreview()
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { notification in
+            guard let scene = preview.view?.window?.windowScene, notification.object as? UIScene === scene else { return }
+            screenDimmer.restore()
+        }
         .sheet(isPresented: $showingSettings, onDismiss: model.applyRecordingSettingsIfNeeded) {
-            FootageSettingsView(model: model)
+            FootageSettingsView(model: model, dimsScreen: $dimsScreen)
                 .tint(courtGreen)
                 .recordingPermissionPrompts(model)
         }
         .recordingPermissionPrompts(model, enabled: !showingSettings && !model.isSaving)
+        .onChange(of: shouldDimScreen, initial: true) { _, _ in
+            updateScreenBrightness()
+        }
+        .onChange(of: model.availableSeconds == 0) { _, isEmpty in
+            if isEmpty { dimmingWasInterrupted = false }
+        }
+        .onChange(of: dimsScreen) { _, _ in
+            dimmingWasInterrupted = false
+        }
+        .onDisappear { screenDimmer.restore() }
         .task(id: model.status) {
             guard let status = model.status else {
                 showsSaveFeedback = false
@@ -92,7 +108,7 @@ struct RecordingView: View {
         }
         .task(id: saveRegionFlash) {
             guard saveRegionFlash != nil else { return }
-            try? await Task.sleep(for: .milliseconds(400))
+            try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled {
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                     saveRegionFlash = nil
@@ -113,13 +129,39 @@ struct RecordingView: View {
         preview.refreshVideoAspect()
         guard let orientation = preview.activeInterfaceOrientation else { return }
         model.startWhenActive(orientation: orientation)
+        updateScreenBrightness()
     }
 
-    private func replayCover(frame: CGImage?) -> some View {
+    private func updateScreenBrightness() {
+        if shouldDimScreen, let screen = preview.view?.window?.windowScene?.screen {
+            screenDimmer.dim(screen, animated: !reduceMotion)
+        } else {
+            screenDimmer.restore()
+        }
+    }
+
+    private func wakeScreen() {
+        if dimsScreen && model.isBufferFull { dimmingWasInterrupted = true }
+        screenDimmer.restore()
+    }
+
+    private func replayCover(_ replay: SavedReplay) -> some View {
         GeometryReader { screen in
             let insets = screen.safeAreaInsets
             let viewport = previewSize(in: screen)
+            let frame = replay.thumbnail
             let region = frame.flatMap { saveRegion(in: viewport, fallbackFrame: $0) }
+            let cardWidth = min((region?.width ?? screen.size.width) * 0.88, 350)
+            let confirmation = ViewThatFits(in: .vertical) {
+                replayConfirmation(for: replay, spacing: 32)
+
+                ScrollView {
+                    replayConfirmation(for: replay, spacing: 16)
+                }
+                .defaultScrollAnchor(.center, for: .alignment)
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .frame(width: cardWidth)
 
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -130,37 +172,76 @@ struct RecordingView: View {
                         .scaledToFill()
                         .frame(width: region.width, height: region.height)
                         .clipShape(saveRegionShape)
-                        .overlay { replayConfirmation.padding(12) }
+                        .overlay { confirmation }
                         .position(x: region.midX - insets.leading, y: region.midY - insets.top)
                 } else {
-                    replayConfirmation
-                }
-
-                if model.phase == .recording {
-                    let inset = bufferIndicatorHeight / 2 + 8
-                    let bottom = screen.size.height - inset
-                    let belowThumbnail = region.map { $0.maxY - insets.top + inset } ?? bottom
-                    let centerX = region.map { $0.midX - insets.leading } ?? screen.size.width / 2
-                    bufferIndicator
-                        .position(x: centerX, y: min(belowThumbnail, bottom))
-                        .allowsHitTesting(false)
+                    confirmation
                 }
             }
         }
     }
 
-    private var replayConfirmation: some View {
-        VStack(spacing: 8) {
-            Text("Video saved.")
-                .font(.headline)
+    private func replayConfirmation(for replay: SavedReplay, spacing: CGFloat) -> some View {
+        let fractionDigits = replay.durationSeconds < 1 ? 2 : 0
+        let duration = replay.durationSeconds.formatted(.number.precision(.fractionLength(0...fractionDigits)))
+        let seconds = model.replaySecondsRemaining
+
+        return VStack(spacing: spacing) {
+            Text("\(duration) second video saved")
+                .font(.title3.bold())
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("replaySavedConfirmation")
-            playReplayButton
+
+            Button {
+                replayToPlay = model.openRecentReplay()
+            } label: {
+                replayButtonLabel(Text("Play video"), foreground: .black, fill: courtGreen)
+            }
+            .accessibilityHint("Plays the replay just added to Photos")
+            .accessibilityIdentifier("playSavedReplay")
+
+            Button {
+                model.dismissRecentReplay(id: replay.id)
+            } label: {
+                replayButtonLabel(Text("Ready for next (\(seconds)s)"), foreground: .white, fill: Color(white: 0.25))
+            }
+            .accessibilityLabel("Ready for next")
+            .accessibilityValue("\(seconds) seconds")
+            .accessibilityIdentifier("readyForNextReplay")
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background(.black.opacity(0.78), in: .rect(cornerRadius: 16))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 20)
+        .background(.black.opacity(0.88), in: .rect(cornerRadius: 22))
+    }
+
+    private func replayButtonLabel(_ title: Text, foreground: Color, fill: Color) -> some View {
+        title
+            .font(.headline)
+            .monospacedDigit()
+            .multilineTextAlignment(.center)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(fill, in: Capsule())
+            .contentShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var cameraWithAccessory: some View {
+        if #available(iOS 27.1, *) {
+            cameraScreen.sceneAccessory {
+                if model.phase == .recording && !showingSettings {
+                    CameraCaptureAccessory {
+                        ReplayCaptureAccessoryView(model: model, accent: courtGreen, onTouch: wakeScreen)
+                    }
+                }
+            }
+        } else {
+            cameraScreen
+        }
     }
 
     private var cameraScreen: some View {
@@ -217,37 +298,13 @@ struct RecordingView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlayPreferenceValue(CameraAccessoriesBounds.self) { accessoriesBounds in
-            if isRecording && (!canUseCameraControls || camera != nil) {
-                GeometryReader { viewport in
-                    let insets = viewport.safeAreaInsets
-                    let size = previewSize(in: viewport)
-                    let video = liveVideoRect(in: size) ?? CGRect(origin: .zero, size: size)
-                    let targetY = video.minY + video.height * 0.85 - insets.top
-                    let toolbarTop = accessoriesBounds.map { viewport[$0].minY } ?? viewport.size.height
-                    let lowestY = toolbarTop - bufferIndicatorHeight / 2 - 6
-                    bufferIndicator
-                        .position(x: video.midX - insets.leading, y: min(targetY, lowestY))
-                }
-                .allowsHitTesting(false)
-            }
-        }
         .overlay(alignment: .top) {
-            VStack(spacing: 8) {
-                feedbackToast
-                    .allowsHitTesting(false)
-
-                if !isRecording && model.blockedCapturePermission == .microphone {
-                    Button("Open iPhone Settings", action: model.openPermissionSettings)
-                        .buttonStyle(.borderedProminent)
-                        .tint(courtGreen)
-                        .foregroundStyle(.black)
-                        .accessibilityIdentifier("openPermissionSettings")
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
+            feedbackToast
+                .allowsHitTesting(false)
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
         }
+        .gesture(RecordingTouchObserver(onTouch: wakeScreen))
     }
 
     private var previewInteraction: some View {
@@ -274,7 +331,7 @@ struct RecordingView: View {
                     if let region = saveRegion(in: viewport.size) {
                         Color.clear
                             .frame(width: region.width, height: region.height)
-                            .overlay { saveRegionGlow }
+                            .overlay { saveRegionFeedback.opacity(saveRegionFlash == nil ? 0 : 1) }
                             .contentShape(saveRegionShape)
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Save replay")
@@ -283,6 +340,7 @@ struct RecordingView: View {
                             .accessibilityAction { saveFromPreview() }
                             .accessibilityZoomAction { action in
                                 guard let zoom = model.cameraControls?.zoom else { return }
+                                wakeScreen()
                                 switch action.direction {
                                 case .zoomIn: model.setZoom(zoom.factor * 1.2)
                                 case .zoomOut: model.setZoom(zoom.factor / 1.2)
@@ -291,13 +349,6 @@ struct RecordingView: View {
                             }
                             .accessibilitySortPriority(2)
                             .accessibilityIdentifier("saveReplay")
-                            .overlay {
-                                if showsTapToRecordHint {
-                                    tapToRecordHint
-                                }
-                            }
-                            .onAppear(perform: showTapToRecordHintOnce)
-                            .onDisappear { showsTapToRecordHint = false }
                             .position(x: region.midX, y: region.midY)
                     }
                 }
@@ -305,6 +356,7 @@ struct RecordingView: View {
                 .gesture(pinch.exclusively(before: tap))
         }
         .ignoresSafeArea()
+        .onDisappear { saveRegionFlash = nil }
     }
 
     private func liveVideoRect(in size: CGSize) -> CGRect? {
@@ -333,49 +385,16 @@ struct RecordingView: View {
         return video.insetBy(dx: video.width * 0.1, dy: video.height * 0.1)
     }
 
-    private var saveRegionGlow: some View {
-        Canvas { context, size in
-            let area = Path(CGRect(origin: .zero, size: size))
-            let radius = min(54, min(size.width, size.height) * 0.22)
-            let glow = Gradient(colors: [.white.opacity(0.7), .white.opacity(0)])
-            for corner in [CGPoint.zero, CGPoint(x: size.width, y: 0),
-                           CGPoint(x: 0, y: size.height), CGPoint(x: size.width, y: size.height)] {
-                context.fill(area, with: .radialGradient(glow, center: corner, startRadius: 0, endRadius: radius))
-            }
-        }
-        .clipShape(saveRegionShape)
-        .opacity(saveRegionFlash == nil ? 0 : 1)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    private var tapToRecordHint: some View {
-        ZStack {
-            saveRegionShape.strokeBorder(courtGreen, lineWidth: 2)
-                .accessibilityHidden(true)
-
-            Text("Tap here to record")
-                .font(.headline)
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.85), in: .rect(cornerRadius: 12))
-                .padding(12)
-                .accessibilityIdentifier("tapToRecordHint")
-        }
-        .allowsHitTesting(false)
-    }
-
-    private func showTapToRecordHintOnce() {
-        guard !hasShownTapToRecordHint else { return }
-        hasShownTapToRecordHint = true
-        showsTapToRecordHint = true
-        AccessibilityNotification.Announcement("Double-tap Save replay to save recent footage.").post()
+    private var saveRegionFeedback: some View {
+        saveRegionShape.fill(.white.opacity(0.20))
+            .overlay { saveRegionShape.strokeBorder(courtGreen, lineWidth: 2) }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func saveFromPreview() {
-        showsTapToRecordHint = false
+        wakeScreen()
+        guard model.canSaveReplay else { return }
         saveRegionFlash = UUID()
         model.saveReplay()
     }
@@ -391,7 +410,6 @@ struct RecordingView: View {
                 // The Duo's outer display can reserve more space on one side for system UI.
                 let sideMargin = max(16, insets.leading, insets.trailing)
                 cameraAccessories(camera, vertical: false)
-                    .anchorPreference(key: CameraAccessoriesBounds.self, value: .bounds) { $0 }
                     .padding(.leading, sideMargin - insets.leading)
                     .padding(.trailing, sideMargin - insets.trailing)
                     .padding(.bottom, 12)
@@ -480,6 +498,7 @@ struct RecordingView: View {
             ForEach(zoom.presets, id: \.self) { preset in
                 let selected = abs(zoom.factor - preset) < 0.05
                 Button {
+                    wakeScreen()
                     model.setZoom(preset)
                 } label: {
                     Text("\(zoomTitle(preset))×")
@@ -516,7 +535,7 @@ struct RecordingView: View {
 
     private var settingsGear: some View {
         Button {
-            showsTapToRecordHint = false
+            saveRegionFlash = nil
             showingSettings = true
         } label: {
             cameraControlIcon("gearshape")
@@ -525,22 +544,6 @@ struct RecordingView: View {
         .disabled(model.isSaving)
         .accessibilityLabel("Settings")
         .accessibilityIdentifier("recordingSettings")
-    }
-
-    private var playReplayButton: some View {
-        Button {
-            replayToPlay = model.openRecentReplay()
-        } label: {
-            Text("Play…")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(courtGreen)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 44)
-                .background(.white.opacity(0.12), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Plays the replay just added to Photos")
-        .accessibilityIdentifier("playSavedReplay")
     }
 
     private func cameraControlIcon(_ symbol: String) -> some View {
@@ -554,34 +557,6 @@ struct RecordingView: View {
 
     private func zoomTitle(_ factor: Double) -> String {
         factor.formatted(.number.precision(.fractionLength(0...1)))
-    }
-
-    private var bufferIndicator: some View {
-        let duration = model.activeSettings.clipDuration
-        let available = model.availableSeconds.isFinite ? min(Double(duration), max(0, model.availableSeconds)) : 0
-        let wholeSeconds = Int(available)
-        let isFull = model.isBufferFull
-
-        return GeometryReader { track in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.black.opacity(0.28))
-                Capsule().fill(courtGreen)
-                    .frame(width: track.size.width * available / Double(duration))
-            }
-        }
-        .frame(height: 4)
-        .animation(reduceMotion ? nil : .linear(duration: 0.16), value: available)
-        .padding(.horizontal, 8)
-        .frame(height: bufferIndicatorHeight)
-        .frame(maxWidth: 176)
-        .background(.white.opacity(0.28), in: .rect(cornerRadius: 8))
-        .opacity(isFull ? 0 : 1)
-        .animation(reduceMotion || !isFull ? nil : .easeOut(duration: 0.25), value: isFull)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Filling buffer")
-        .accessibilityValue("\(wholeSeconds) of \(duration) seconds")
-        .accessibilityIdentifier("replayBuffer")
-        .accessibilityHidden(isFull)
     }
 
     @ViewBuilder
@@ -605,54 +580,236 @@ struct RecordingView: View {
 
     private var saveHint: Text {
         let options = model.activeSettings
+        let duration = Duration.seconds(options.clipDuration)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))
         if options.ignoredSeconds == 0 {
-            return Text("Saves up to the last \(options.clipDuration) seconds")
+            return Text("Saves up to the last \(duration)")
         }
         let skipped = Duration.seconds(options.ignoredSeconds).formatted(.units(allowed: [.seconds], width: .wide))
-        return Text("Saves up to \(options.clipDuration) seconds, skipping the last \(skipped)")
+        return Text("Saves up to \(duration), skipping the last \(skipped)")
     }
 }
 
-private struct CameraAccessoriesBounds: PreferenceKey {
-    static var defaultValue: Anchor<CGRect>? { nil }
+@MainActor
+private final class RecordingScreenDimmer {
+    private var original: (screen: UIScreen, brightness: CGFloat)?
+    private var fade: Task<Void, Never>?
 
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
+    func dim(_ screen: UIScreen, animated: Bool) {
+        guard original?.screen !== screen else { return }
+        restore()
+
+        let brightness = screen.brightness
+        let target = min(brightness, max(0.08, brightness * 0.22))
+        guard target < brightness else { return }
+        original = (screen, brightness)
+
+        guard animated else {
+            screen.brightness = target
+            return
+        }
+
+        fade = Task {
+            let steps = 20
+            for step in 1...steps {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                let progress = CGFloat(step) / CGFloat(steps)
+                screen.brightness = brightness + (target - brightness) * progress
+            }
+        }
+    }
+
+    func restore() {
+        fade?.cancel()
+        fade = nil
+        if let original {
+            self.original = nil
+            original.screen.brightness = original.brightness
+        }
+    }
+}
+
+private struct RecordingTouchObserver: UIGestureRecognizerRepresentable {
+    let onTouch: @MainActor () -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> TouchRecognizer {
+        let recognizer = TouchRecognizer(target: nil, action: nil)
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.onTouch = onTouch
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: TouchRecognizer, context: Context) {
+        recognizer.onTouch = onTouch
+    }
+
+    final class TouchRecognizer: UIGestureRecognizer {
+        var onTouch: (@MainActor () -> Void)?
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            onTouch?()
+            // Observe the touch without recognizing a gesture that could compete with saving or zooming.
+            state = .failed
+        }
+    }
+}
+
+private struct ReplayCaptureAccessoryView: View {
+    let model: RecordingModel
+    let accent: Color
+    let onTouch: @MainActor () -> Void
+    @State private var feedback: String?
+
+    var body: some View {
+        GeometryReader { display in
+            let insets = display.safeAreaInsets
+            let sideMargin = max(24, insets.leading, insets.trailing)
+            let verticalMargin = max(12, insets.top, insets.bottom)
+
+            controls
+                .frame(maxWidth: 320)
+                .padding(.leading, sideMargin - insets.leading)
+                .padding(.trailing, sideMargin - insets.trailing)
+                .padding(.top, verticalMargin - insets.top)
+                .padding(.bottom, verticalMargin - insets.bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background { Color.black.ignoresSafeArea() }
+        .contentShape(Rectangle())
+        .gesture(RecordingTouchObserver(onTouch: onTouch))
+        .overlay(alignment: .bottom) {
+            if let feedback {
+                Text(feedback)
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .padding(16)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .task(id: model.status) {
+            feedback = model.status
+            guard feedback != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { feedback = nil }
+        }
+    }
+
+    private var controls: some View {
+        let duration = Double(model.activeSettings.clipDuration)
+        let available = model.availableSeconds.isFinite ? min(duration, max(0, model.availableSeconds)) : 0
+
+        return VStack(spacing: 20) {
+            if model.isBufferFull {
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(accent)
+            } else {
+                VStack(spacing: 8) {
+                    Text("Filling buffer")
+                        .font(.headline)
+                    ProgressView(value: available, total: duration)
+                        .tint(accent)
+                        .accessibilityLabel("Replay buffer")
+                }
+            }
+
+            Button {
+                onTouch()
+                model.saveReplay(showsThumbnail: false)
+            } label: {
+                Label(model.isSaving ? "Saving…" : "Save Replay", systemImage: "arrow.down.to.line")
+                    .font(.title2.bold())
+                    .frame(maxWidth: .infinity, minHeight: 60)
+                    .padding(.horizontal, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(accent)
+            .foregroundStyle(.black)
+            .disabled(!model.canSaveReplay || available <= 0)
+            .accessibilityHint("Saves recent footage to Photos")
+            .accessibilityIdentifier("outerSaveReplay")
+        }
     }
 }
 
 private struct SavedReplayPlayer: View {
     let replay: SavedReplay
     let model: RecordingModel
+    let preview: PreviewReference
     let onClose: () -> Void
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var player: AVPlayer?
     @State private var isMuted = false
+    @State private var playbackEnded = false
+    @State private var playbackSeconds: Double = 0
+    @State private var playbackTimeObserver: Any?
+
+    private var hasPlaybackFocus: Bool {
+        scenePhase == .active && preview.isSceneFrontmost
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            VideoPlayer(player: player)
-                .ignoresSafeArea()
-                .accessibilityIdentifier("savedReplayPlayer")
+            if let player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+                    .accessibilityIdentifier("savedReplayPlayer")
+                    .onReceive(player.publisher(for: \.timeControlStatus, options: [.new]).receive(on: DispatchQueue.main)) { status in
+                        if status == .playing { playbackEnded = false }
+                    }
+            }
+        }
+        .overlay {
+            ZStack {
+                if playbackEnded {
+                    Button(action: playAgain) {
+                        Label("Play again", systemImage: "arrow.counterclockwise")
+                    }
+                    .accessibilityIdentifier("replayPlayAgain")
+                }
+
+                Button("Close", action: closePlayback)
+                    .accessibilityIdentifier("closeSavedReplay")
+                    .padding(.top, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .font(.headline)
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .tint(Color(white: 0.18).opacity(0.94))
+            .foregroundStyle(.white)
+        }
+        .overlay(alignment: .bottom) {
+            if player != nil, !playbackEnded, replay.durationSeconds.isFinite, replay.durationSeconds > 0 {
+                playbackProgress
+            }
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                if model.activeSettings.audioEnabled, let player {
-                    Button {
-                        isMuted.toggle()
-                        player.isMuted = isMuted
-                    } label: {
-                        replayControlIcon(isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    }
-                    .accessibilityLabel(isMuted ? "Unmute replay audio" : "Mute replay audio")
-                    .accessibilityHint(isMuted ? "Use headphones to keep playback out of the next recording" : "")
-                    .accessibilityIdentifier("toggleReplayAudio")
+            if model.activeSettings.audioEnabled, let player {
+                Button {
+                    isMuted.toggle()
+                    player.isMuted = isMuted
+                } label: {
+                    Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.84), in: Circle())
+                        .contentShape(Circle())
                 }
-                replayCloseButton("closeSavedReplay", action: closePlayback)
+                .buttonStyle(.plain)
+                .accessibilityLabel(isMuted ? "Unmute replay audio" : "Mute replay audio")
+                .accessibilityHint(isMuted ? "Use headphones to keep playback out of the next recording" : "")
+                .accessibilityIdentifier("toggleReplayAudio")
+                .padding(16)
             }
-            .buttonStyle(.plain)
-            .padding(16)
         }
         .accessibilityAction(.escape, closePlayback)
         .task {
@@ -661,39 +818,92 @@ private struct SavedReplayPlayer: View {
             isMuted = model.activeSettings.audioEnabled
             player.isMuted = isMuted
             self.player = player
-            player.play()
+            playbackSeconds = 0
+            playbackTimeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 4), queue: .main) { [weak player] time in
+                MainActor.assumeIsolated {
+                    guard let player, self.player === player, time.seconds.isFinite else { return }
+                    playbackSeconds = max(0, time.seconds)
+                }
+            }
+            if hasPlaybackFocus { player.play() }
+        }
+        .onChange(of: hasPlaybackFocus) { _, focused in
+            if !focused { player?.pause() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)
+            .receive(on: DispatchQueue.main)) { notification in
+            guard let item = notification.object as? AVPlayerItem, item === player?.currentItem else { return }
+            playbackEnded = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { notification in
+            guard let scene = preview.view?.window?.windowScene, notification.object as? UIScene === scene else { return }
+            player?.pause()
         }
         .onDisappear(perform: stopPlayback)
     }
 
+    private var playbackProgress: some View {
+        let total = replay.durationSeconds
+        let elapsed = min(playbackSeconds, total)
+        let precision = total < 1 ? 2 : 0
+        let elapsedTime = Duration.seconds(elapsed).formatted(.time(pattern: .minuteSecond(
+            padMinuteToLength: 1, fractionalSecondsLength: precision, roundFractionalSeconds: .down
+        )))
+        let totalTime = Duration.seconds(total).formatted(.time(pattern: .minuteSecond(
+            padMinuteToLength: 1, fractionalSecondsLength: precision, roundFractionalSeconds: .up
+        )))
+
+        return VStack(spacing: 6) {
+            ProgressView(value: elapsed, total: total)
+                .progressViewStyle(.linear)
+                .tint(.white)
+
+            HStack {
+                Text(elapsedTime)
+                Spacer()
+                Text(totalTime)
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.8), in: .rect(cornerRadius: 12))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Replay progress")
+        .accessibilityValue("\(elapsedTime) of \(totalTime)")
+        .accessibilityIdentifier("replayPlaybackProgress")
+    }
+
+    private func playAgain() {
+        guard let player, hasPlaybackFocus else { return }
+        Task {
+            let didSeek = await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard didSeek, self.player === player, hasPlaybackFocus else { return }
+            playbackSeconds = 0
+            playbackEnded = false
+            player.play()
+        }
+    }
+
     private func stopPlayback() {
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = nil
+        guard let player else { return }
+        if let playbackTimeObserver {
+            player.removeTimeObserver(playbackTimeObserver)
+            self.playbackTimeObserver = nil
+        }
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        self.player = nil
     }
 
     private func closePlayback() {
         stopPlayback()
         onClose()
     }
-}
-
-private func replayCloseButton(_ identifier: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-        replayControlIcon("xmark")
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("Close replay")
-    .accessibilityIdentifier(identifier)
-}
-
-private func replayControlIcon(_ symbol: String) -> some View {
-    Image(systemName: symbol)
-        .font(.headline)
-        .foregroundStyle(.white)
-        .frame(width: 44, height: 44)
-        .background(.black.opacity(0.84), in: Circle())
-        .contentShape(Circle())
 }
 
 private struct RequiredPermissionsView: View {
@@ -788,6 +998,15 @@ private struct RequiredPermissionsView: View {
 private final class PreviewReference {
     @ObservationIgnored weak var view: UIView?
     private var lastVideoAspect: CGFloat?
+    private(set) var isSceneFrontmost = false
+
+    func refreshSceneFocus() {
+        guard let view, view.window != nil else {
+            isSceneFrontmost = false
+            return
+        }
+        isSceneFrontmost = view.traitCollection.activeAppearance != .inactive
+    }
 
     func refreshVideoAspect() {
         guard let view, let video = measuredVideoRect(in: view.bounds.size) else { return }
@@ -843,6 +1062,10 @@ private struct CameraPreview: UIViewRepresentable {
         view.onAttach = { attachedView in
             capture.setPreviewView(attachedView)
             reference.view = attachedView
+            reference.refreshSceneFocus()
+        }
+        view.registerForTraitChanges([UITraitActiveAppearance.self]) { (_: CameraSurface, _: UITraitCollection) in
+            reference.refreshSceneFocus()
         }
         view.onGeometryReady = onGeometryReady
         view.onPreviewGeometryChange = reference.refreshVideoAspect
@@ -923,6 +1146,7 @@ private struct CourtArtwork: View {
 
 private struct FootageSettingsView: View {
     @Bindable var model: RecordingModel
+    @Binding var dimsScreen: Bool
     @State private var showingResolutions = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
@@ -933,10 +1157,11 @@ private struct FootageSettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    let units: Set<Duration.UnitsFormatStyle.Unit> = settings.clipDuration <= 60
+                        ? [.seconds] : [.hours, .minutes, .seconds]
                     let clipLength = Duration.seconds(settings.clipDuration)
-                        .formatted(.units(allowed: [.seconds], width: .wide))
-                    Stepper(value: $model.settings.clipDuration, in: RecordingSettings.allowedDurations,
-                            step: RecordingSettings.clipDurationStep) {
+                        .formatted(.units(allowed: units, width: .wide).locale(locale))
+                    Stepper(value: $model.settings.clipDurationIndex, in: 0...(RecordingSettings.clipDurations.count - 1)) {
                         Text(clipLength)
                             .font(.title.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.primary)
@@ -963,8 +1188,20 @@ private struct FootageSettingsView: View {
                 Section {
                     resolutionPicker
 
-                    Toggle("Audio", isOn: $model.settings.audioEnabled)
+                    Toggle("Audio", isOn: model.canEnableAudio ? $model.settings.audioEnabled : .constant(false))
+                        .disabled(!model.canEnableAudio)
                         .accessibilityIdentifier("recordMicrophone")
+                } footer: {
+                    if !model.canEnableAudio {
+                        Text("Microphone not available. Enable in iOS Settings / Privacy / Microphone")
+                    }
+                }
+
+                Section {
+                    Toggle("Dim screen", isOn: $dimsScreen)
+                        .accessibilityIdentifier("dimPreviewWhenReady")
+                } footer: {
+                    Text("Dimming saves battery")
                 }
 
                 Section {
@@ -1013,9 +1250,8 @@ private struct FootageSettingsView: View {
             VStack(spacing: 0) {
                 ForEach(VideoQuality.allCases) { quality in
                     let isSelected = settings.quality == quality
-                    let bytes = quality.estimatedBytes(durationSeconds: settings.clipDuration, includeAudio: settings.audioEnabled)
-                    let estimatedSize = (Double(bytes) / 1_000_000)
-                        .formatted(.number.precision(.fractionLength(1)).locale(locale))
+                    let bytes = quality.estimatedBytes(durationSeconds: settings.clipDuration, includeAudio: model.audioEnabledInSettings)
+                    let estimatedSize = bytes.formatted(.byteCount(style: .file, allowedUnits: [.mb, .gb]).locale(locale))
 
                     Button {
                         model.settings.quality = quality
@@ -1028,7 +1264,7 @@ private struct FootageSettingsView: View {
                                 .accessibilityHidden(true)
                             Text(quality.title)
                             Spacer(minLength: 12)
-                            Text("~\(estimatedSize) MB / clip")
+                            Text("~\(estimatedSize) / clip")
                                 .font(.subheadline.monospacedDigit())
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.trailing)
@@ -1038,7 +1274,7 @@ private struct FootageSettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(quality.title)
-                    .accessibilityValue("Approximately \(estimatedSize) megabytes per clip")
+                    .accessibilityValue("Approximately \(estimatedSize) per clip")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
@@ -1054,6 +1290,10 @@ private struct FootageSettingsView: View {
 private struct AboutCourtFootageView: View {
     var body: some View {
         Form {
+            Section {
+                Text("Court Footage is a hobby project by Joachim Neumann. It’s free and always will be.")
+            }
+
             Section {
                 NavigationLink("MIT License") {
                     MITLicenseView()
@@ -1095,6 +1335,8 @@ private struct PrivacyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                Text("The Court Footage app does not connect to the internet, upload any information, or track you.")
+                    .bold()
                 Text("Court Footage opens the camera when you launch the app, once you grant camera access. It records microphone audio when Audio is on. Recent footage is kept in a temporary buffer on your iPhone.")
                 Text("When you first open the app, Court Footage asks for permission to add videos to Photos. Photos handles saved videos according to your library and iCloud settings. Unsaved footage is discarded when recording ends.")
 

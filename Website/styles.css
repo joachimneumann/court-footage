@@ -202,44 +202,45 @@ h2 {
 
 .phone-portrait img { border-radius: 26px; }
 
-figcaption {
-  margin-top: 13px;
-  color: var(--muted);
-  font-size: 0.76rem;
-  text-align: center;
-}
-
 .workflow { padding-block: clamp(64px, 8vw, 105px); }
 
-.workflow h2, .settings h2, .policy-page h1 { margin-top: 12px; }
+.workflow h2, .policy-page h1 { margin-top: 12px; }
 
 .steps {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px 32px;
+  gap: 28px 36px;
   padding: 0;
-  margin: 32px 0 0;
+  margin: 36px 0 0;
   list-style: none;
   counter-reset: steps;
 }
 
 .steps li {
-  padding-top: 18px;
+  padding-top: 22px;
   border-top: 1px solid var(--line);
   counter-increment: steps;
 }
 
 .steps li::before {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   color: var(--accent);
-  font-size: 0.78rem;
-  font-weight: 750;
+  font-family: var(--display-font);
+  font-size: clamp(1.4rem, 2.1vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   content: counter(steps, decimal-leading-zero);
 }
 
-.steps h3, .settings dt {
+.steps h3 {
+  font-family: var(--display-font);
+  font-size: clamp(1.65rem, 2.5vw, 2.25rem);
+  line-height: 1.1;
+}
+
+.settings dt {
   color: var(--foreground);
   font-size: 1.06rem;
   font-weight: 700;
@@ -247,12 +248,12 @@ figcaption {
 
 .steps p, .settings dd, .privacy-summary p, .policy-prose { color: var(--muted); }
 
-.steps p, .settings dd { margin-top: 5px; }
-
-.replay-preview {
-  width: min(100%, 760px);
-  margin: clamp(28px, 5vw, 54px) auto 0;
+.steps p {
+  margin-top: 8px;
+  font-size: clamp(1.125rem, 1.45vw, 1.25rem);
 }
+
+.settings dd { margin-top: 5px; }
 
 .settings {
   display: grid;
@@ -379,9 +380,15 @@ figcaption {
 
   .steps { grid-template-columns: 1fr; }
 
+  .steps li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 14px;
+  }
+
   .steps li::before {
-    float: left;
-    margin: 3px 12px 0 0;
+    grid-row: span 2;
+    margin: 3px 0 0;
   }
 
   .settings { grid-template-columns: 1fr; }

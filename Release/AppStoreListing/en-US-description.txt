@@ -1,0 +1,9 @@
+Court Footage turns your iPhone into an instant replay camera for pickleball, tennis, padel, and other court sports.
+
+Mount your iPhone courtside in portrait or landscape and open the app. Court Footage keeps the most recent footage as you play. After a point worth keeping, tap the camera preview to save the preceding clip to Photos. You can watch the replay in Court Footage while the camera keeps recording.
+
+• Choose a clip length from 5 seconds to 1 hour. Skip up to 10 seconds just before your tap to leave out the walk back to the phone.
+• Use the front or rear camera. Pinch to zoom or tap a zoom preset to frame the court.
+• Choose 720p, 1080p, or 4K where supported by your camera. Turn court audio on or off.
+
+Court Footage works offline. The app processes footage on your iPhone and does not track you. Court Footage does not upload your data or footage anywhere. When you save a clip to Photos, any syncing follows your Photos and iCloud settings. Court Footage is open source under the MIT License.

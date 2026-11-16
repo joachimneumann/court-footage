@@ -1,8 +1,10 @@
 import Foundation
 
 struct RecordingSettings: Codable, Equatable, Sendable {
-    static let allowedDurations = 5...60
-    static let clipDurationStep = 5
+    static let clipDurations = Array(stride(from: 5, through: 60, by: 5))
+        + Array(stride(from: 90, through: 180, by: 30))
+        + Array(stride(from: 240, through: 600, by: 60))
+        + Array(stride(from: 900, through: 3_600, by: 300))
     static let allowedIgnoredSeconds = 0...10
     static let audioBitrate = 128_000
 
@@ -10,6 +12,15 @@ struct RecordingSettings: Codable, Equatable, Sendable {
     var clipDuration = 30
     var ignoredSeconds = 2
     var quality = VideoQuality.fullHD
+    var usesDiskReplayBuffer: Bool { clipDuration > 60 }
+
+    var clipDurationIndex: Int {
+        get { Self.clipDurations.firstIndex(of: clipDuration) ?? 0 }
+        set {
+            guard Self.clipDurations.indices.contains(newValue) else { return }
+            clipDuration = Self.clipDurations[newValue]
+        }
+    }
 
     private static let storageKey = "recordingSettings"
 
@@ -17,8 +28,9 @@ struct RecordingSettings: Codable, Equatable, Sendable {
         guard let data = defaults.data(forKey: storageKey),
               var value = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
 
-        let boundedDuration = min(max(value.clipDuration, allowedDurations.lowerBound), allowedDurations.upperBound)
-        value.clipDuration = (boundedDuration + clipDurationStep / 2) / clipDurationStep * clipDurationStep
+        if !clipDurations.contains(value.clipDuration) {
+            value.clipDuration = clipDurations.last { $0 < value.clipDuration } ?? clipDurations[0]
+        }
         value.ignoredSeconds = min(max(value.ignoredSeconds, allowedIgnoredSeconds.lowerBound), allowedIgnoredSeconds.upperBound)
         return value
     }
