@@ -105,6 +105,7 @@ final class RecordingModel {
     @ObservationIgnored private var pendingTaps: [Tap] = []
     @ObservationIgnored private var queuedReplays: [QueuedReplay] = []
     @ObservationIgnored private var retainedExportMemoryBytes = 0
+    @ObservationIgnored private weak var recordingScene: UIWindowScene?
     @ObservationIgnored private var isInForeground = false
     @ObservationIgnored private var foregroundGeneration = 0
     @ObservationIgnored private var cameraFacing: CameraFacing = .back
@@ -144,7 +145,9 @@ final class RecordingModel {
         watch.activate()
     }
 
-    func startWhenActive() {
+    func startWhenActive(in scene: UIWindowScene) {
+        guard scene.activationState == .foregroundActive else { return }
+        recordingScene = scene
         microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
         let enteredForeground = !isInForeground
         isInForeground = true
@@ -160,6 +163,10 @@ final class RecordingModel {
     private func start(facing: CameraFacing) {
         guard isInForeground,
               phase == .idle || phase == .interrupted else { return }
+        guard recordingScene?.activationState == .foregroundActive else {
+            phase = .interrupted
+            return
+        }
         let requested = requestedRecordingSettings
         activeSettings = requested
         phase = .starting
@@ -175,9 +182,14 @@ final class RecordingModel {
             do {
                 if !demoMode {
                     try await authorizeCapture(audioEnabled: requested.audioEnabled)
-                    try Task.checkCancellation()
-                    guard isInForeground else { return }
+                }
+                try Task.checkCancellation()
+                guard recordingScene?.activationState == .foregroundActive else {
+                    phase = .interrupted
+                    return
+                }
 
+                if !demoMode {
                     microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
                     var sessionSettings = requested
                     sessionSettings.audioEnabled = requested.audioEnabled && microphoneAuthorization == .authorized
@@ -250,7 +262,9 @@ final class RecordingModel {
         )
     }
 
-    func didEnterBackground() {
+    func didEnterBackground(in scene: UIWindowScene?) -> Bool {
+        guard isInForeground, scene == nil || scene === recordingScene else { return false }
+        recordingScene = nil
         isInForeground = false
         foregroundGeneration &+= 1
         cancelReplaySaves()
@@ -263,6 +277,7 @@ final class RecordingModel {
         if phase == .recording || phase == .starting {
             finishCapture(interrupted: true)
         }
+        return true
     }
 
     private func cancelReplaySaves() {
@@ -474,7 +489,6 @@ final class RecordingModel {
             try? await Task.sleep(for: .milliseconds(750))
             guard !Task.isCancelled else { return }
             recoveryTask = nil
-            guard UIApplication.shared.applicationState == .active else { return }
             start(facing: cameraFacing)
         }
     }

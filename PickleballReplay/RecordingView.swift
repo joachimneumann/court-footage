@@ -28,7 +28,7 @@ struct RecordingView: View {
     private let zoomButtonWidth: CGFloat = 44
     private let zoomCapsulePadding: CGFloat = 3
     private let cameraToolbarHeight: CGFloat = 50
-    private let cameraToolbarBottomInset: CGFloat = 46
+    private let cameraToolbarBottomInset: CGFloat = 40
 
     private var deviceRotation: Angle {
         switch model.deviceOrientation {
@@ -99,10 +99,12 @@ struct RecordingView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
             startOnActivePreview()
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { notification in
+            guard let scene = notification.object as? UIWindowScene else { return }
+            enterBackground(in: scene)
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            model.didEnterBackground()
-            showingSettings = false
-            saveRegionFlash = nil
+            enterBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { notification in
             guard let scene = preview.view?.window?.windowScene, notification.object as? UIScene === scene else { return }
@@ -145,8 +147,15 @@ struct RecordingView: View {
 
     private func startOnActivePreview() {
         preview.refreshVideoAspect()
-        guard preview.view?.window?.windowScene?.activationState == .foregroundActive else { return }
-        model.startWhenActive()
+        guard let scene = preview.view?.window?.windowScene else { return }
+        model.startWhenActive(in: scene)
+    }
+
+    private func enterBackground(in scene: UIWindowScene? = nil) {
+        guard model.didEnterBackground(in: scene) else { return }
+        screenDimmer.restore()
+        showingSettings = false
+        saveRegionFlash = nil
     }
 
     private func dimScreenAfterInactivity(timerID: Int?) async {
@@ -457,14 +466,15 @@ struct RecordingView: View {
         let rightToLeft = layoutDirection == .rightToLeft
         let leftInset = rightToLeft ? insets.trailing : insets.leading
         let rightInset = rightToLeft ? insets.leading : insets.trailing
+        let toolbarSpace = cameraToolbarBottomInset + cameraToolbarHeight
         guard landscape else {
-            guard let aspect else { return screen }
-            let fitted = AVMakeRect(aspectRatio: aspect, insideRect: screen)
-            return fitted.offsetBy(dx: 0, dy: min(0, insets.top - fitted.minY))
+            let top = aspect.map { min(insets.top, AVMakeRect(aspectRatio: $0, insideRect: screen).minY) } ?? 0
+            let area = CGRect(x: 0, y: top, width: size.width, height: max(0, size.height - top - toolbarSpace - 2))
+            let fitted = aspect.map { AVMakeRect(aspectRatio: $0, insideRect: area) } ?? area
+            return fitted.offsetBy(dx: 0, dy: area.minY - fitted.minY)
         }
 
-        let toolbarSpace = cameraToolbarBottomInset + cameraToolbarHeight + 6
-        let right = max(rightInset, toolbarSpace)
+        let right = max(rightInset, toolbarSpace + 6)
         let area = CGRect(x: leftInset, y: 0, width: max(0, size.width - leftInset - right), height: size.height)
         let fitted = aspect.map { AVMakeRect(aspectRatio: $0, insideRect: area) } ?? area
         return CGRect(x: area.minX, y: fitted.minY, width: fitted.width, height: fitted.height)

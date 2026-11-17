@@ -2,6 +2,7 @@
 import AVKit
 import UIKit
 import VideoToolbox
+import os
 
 enum CameraFacing: Sendable, Equatable {
     case back, front
@@ -130,17 +131,25 @@ final class CaptureService: NSObject, @unchecked Sendable {
         facing: CameraFacing = .back
     ) async throws {
         try await waitForCameraDirections()
-        try Task.checkCancellation()
-        let device: AVCaptureDevice = try await withCheckedThrowingContinuation { continuation in
-            captureQueue.async {
-                do {
-                    continuation.resume(returning: try self.startCapture(settings: settings, facing: facing))
-                } catch {
-                    self.stopCapture()
-                    continuation.resume(throwing: error)
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        let device: AVCaptureDevice = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                captureQueue.async {
+                    do {
+                        continuation.resume(returning: try self.startCapture(
+                            settings: settings, facing: facing, cancelled: cancelled
+                        ))
+                    } catch {
+                        self.stopCapture()
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
+        } onCancel: {
+            cancelled.withLock { $0 = true }
         }
+        try Task.checkCancellation()
         previewCamera = device
         configurePreviewRotation()
     }
@@ -331,7 +340,10 @@ final class CaptureService: NSObject, @unchecked Sendable {
         return discovery.devices
     }
 
-    private func startCapture(settings: RecordingSettings, facing: CameraFacing) throws -> AVCaptureDevice {
+    private func startCapture(
+        settings: RecordingSettings, facing: CameraFacing, cancelled: OSAllocatedUnfairLock<Bool>
+    ) throws -> AVCaptureDevice {
+        guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
         if running, let camera { return camera }
         if Self.requiresCameraDirections, cameraDirections == nil {
             throw CaptureError.cameraDirectionsUnavailable
@@ -364,7 +376,10 @@ final class CaptureService: NSObject, @unchecked Sendable {
         installObservers(for: generation, camera: selectedCamera, audioEnabled: settings.audioEnabled)
         onConfigured(settings, settings.quality.videoBitrate(frameRate: 1 / nominalFrameDuration.seconds))
 
+        // The scene may have gone to the background while the capture queue was configuring the session.
+        guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
         session.startRunning()
+        guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
         guard session.isRunning, let clock = session.synchronizationClock else {
             throw CaptureError.couldNotStart
         }

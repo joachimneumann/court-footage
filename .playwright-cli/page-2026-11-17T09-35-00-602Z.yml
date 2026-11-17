@@ -1,0 +1,64 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2]:
+    - /url: "#main"
+  - main [ref=e3]:
+    - region "Instant replay for court sports." [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - heading [level=1] [ref=e7]:
+            - text: Instant replay
+            - emphasis [ref=e8]: for court sports.
+          - paragraph [ref=e9]: Court Footage is an iPhone app for saving your own highlights from pickleball, tennis, padel, and other court sports. Mount your phone courtside, then tap after a point to save the rally to Photos.
+          - paragraph [ref=e10]:
+            - text: Free. No in-app purchases.
+            - link "Github" [ref=e11]:
+              - /url: https://github.com/joachimneumann/court-footage
+          - generic [ref=e12]:
+            - link [ref=e13]:
+              - /url: https://apps.apple.com/app/id6835100251
+              - img "Download on the App Store" [ref=e14]
+            - paragraph [ref=e15]: "Android app: not yet implemented"
+        - figure [ref=e16]:
+          - generic [ref=e19]:
+            - generic "Pickleball rally preview generated with AI" [ref=e20]
+            - button "Tap to save replay" [ref=e21] [cursor=pointer]
+            - generic:
+              - group "Camera zoom":
+                - button "Zoom 1 times" [pressed] [ref=e23] [cursor=pointer]: 1×
+                - button "Zoom 2 times" [ref=e24] [cursor=pointer]: 2×
+                - button "Zoom 5 times" [ref=e25] [cursor=pointer]: 5×
+              - button "Settings" [ref=e26] [cursor=pointer]
+          - status [ref=e30]
+    - region "How Court Footage works" [ref=e31]:
+      - list [ref=e32]:
+        - listitem [ref=e33]:
+          - heading "Set up courtside" [level=3] [ref=e34]
+          - paragraph [ref=e35]: Mount your iPhone in portrait or landscape. Open Court Footage and use the live camera to frame the court.
+        - listitem [ref=e36]:
+          - heading "Tap after the point" [level=3] [ref=e37]
+          - paragraph [ref=e38]: When a rally is worth keeping, run to the phone and tap the center of the screen. And continue playing. The app automatically saves the footage to your Photos.
+        - listitem [ref=e39]:
+          - heading "Watch it back" [level=3] [ref=e40]
+          - paragraph [ref=e41]: You can watch the saved replay immediately in the Court Footage app, but it is also saved to your photos.
+    - region "Choose what you keep." [ref=e42]:
+      - generic [ref=e43]:
+        - heading "Choose what you keep." [level=2] [ref=e44]
+        - generic [ref=e45]:
+          - generic [ref=e46]:
+            - term [ref=e47]: Clips up to 1 hour
+            - definition [ref=e48]: Choose a length starting at 5 seconds and skip up to 10 seconds just before the tap.
+          - generic [ref=e49]:
+            - term [ref=e50]: Up to 4K
+            - definition [ref=e51]: Choose 720p, 1080p, or 4K when your camera supports it. See the estimated clip size before recording.
+          - generic [ref=e52]:
+            - term [ref=e53]: Optional court audio
+            - definition [ref=e54]: Choose whether your clips include the sounds of play.
+      - figure [ref=e55]:
+        - img "Court Footage Settings showing a 1-hour clip length and the Dim screen toggle" [ref=e57]
+    - region "Your footage stays with you." [ref=e58]:
+      - generic [ref=e59]:
+        - heading "Your footage stays with you." [level=2] [ref=e60]
+        - paragraph [ref=e61]: Court Footage does not upload your data or footage anywhere. When you save a clip to Photos, any syncing follows your Photos and iCloud settings.
+      - link "Read the privacy policy" [ref=e62]:
+        - /url: /privacy
+        - text: Read the privacy policy ↗
