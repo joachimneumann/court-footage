@@ -8,19 +8,56 @@
 
 /* Begin PBXBuildFile section */
 		10000000000000000000001A /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* LICENSE */; };
+		100000000000000000000020 /* CourtFootageWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* CourtFootageWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		100000000000000000000022 /* Assets.xcassets in Watch Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		100000000000000000000024 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000025;
+			remoteInfo = CourtFootageWatch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		100000000000000000000026 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (100000000000000000000020 /* CourtFootageWatch.app in Embed Watch Content */, );
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		100000000000000000000006 /* CourtFootage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourtFootage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000018 /* CourtFootage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CourtFootage.xcconfig; sourceTree = "<group>"; };
 		100000000000000000000019 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		100000000000000000000021 /* CourtFootageWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourtFootageWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000023 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = PickleballReplay/Assets.xcassets; sourceTree = "<group>"; };
+		100000000000000000000034 /* CourtFootageWatch.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CourtFootageWatch.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		100000000000000000000004 /* PickleballReplay */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PickleballReplay;
+			sourceTree = "<group>";
+		};
+		100000000000000000000027 /* CourtFootageWatch */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CourtFootageWatch;
+			sourceTree = "<group>";
+		};
+		100000000000000000000028 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +70,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		100000000000000000000029 /* Watch Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -40,6 +83,9 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000004 /* PickleballReplay */,
+				100000000000000000000027 /* CourtFootageWatch */,
+				100000000000000000000028 /* Shared */,
+				100000000000000000000023 /* Assets.xcassets */,
 				100000000000000000000016 /* Configuration */,
 				100000000000000000000019 /* LICENSE */,
 				100000000000000000000005 /* Products */,
@@ -50,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000006 /* CourtFootage.app */,
+				100000000000000000000021 /* CourtFootageWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -59,6 +106,7 @@
 			children = (
 				100000000000000000000017 /* Info.plist */,
 				100000000000000000000018 /* CourtFootage.xcconfig */,
+				100000000000000000000034 /* CourtFootageWatch.xcconfig */,
 			);
 			path = Configuration;
 			sourceTree = "<group>";
@@ -73,17 +121,39 @@
 				100000000000000000000007 /* Sources */,
 				100000000000000000000008 /* Frameworks */,
 				100000000000000000000009 /* Resources */,
+				100000000000000000000026 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				10000000000000000000002A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				100000000000000000000004 /* PickleballReplay */,
+				100000000000000000000028 /* Shared */,
 			);
 			name = CourtFootage;
 			productName = CourtFootage;
 			productReference = 100000000000000000000006 /* CourtFootage.app */;
+			productType = "com.apple.product-type.application";
+		};
+		100000000000000000000025 /* CourtFootageWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 10000000000000000000002B /* Build configuration list for PBXNativeTarget "CourtFootageWatch" */;
+			buildPhases = (
+				10000000000000000000002C /* Watch Sources */,
+				100000000000000000000029 /* Watch Frameworks */,
+				10000000000000000000002D /* Watch Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (
+				100000000000000000000027 /* CourtFootageWatch */,
+				100000000000000000000028 /* Shared */,
+			);
+			name = CourtFootageWatch;
+			productName = CourtFootageWatch;
+			productReference = 100000000000000000000021 /* CourtFootageWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -97,6 +167,9 @@
 				LastUpgradeCheck = 2720;
 				TargetAttributes = {
 					100000000000000000000002 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+					100000000000000000000025 = {
 						CreatedOnToolsVersion = 27.2;
 					};
 				};
@@ -116,6 +189,7 @@
 			projectRoot = "";
 			targets = (
 				100000000000000000000002 /* CourtFootage */,
+				100000000000000000000025 /* CourtFootageWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -129,6 +203,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		10000000000000000000002D /* Watch Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (100000000000000000000022 /* Assets.xcassets in Watch Resources */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -139,15 +219,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		10000000000000000000002C /* Watch Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		10000000000000000000002A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000025 /* CourtFootageWatch */;
+			targetProxy = 100000000000000000000024 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		100000000000000000000012 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
+				COURT_FOOTAGE_BUNDLE_ID = courtfootage.oachimneumann.com;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				DEVELOPMENT_TEAM = 8A4DL788W9;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.1;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -160,8 +258,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
+				COURT_FOOTAGE_BUNDLE_ID = courtfootage.oachimneumann.com;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				DEVELOPMENT_TEAM = 8A4DL788W9;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.1;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 6.0;
@@ -173,10 +275,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
-				CURRENT_PROJECT_VERSION = "2 ti";
-				DEVELOPMENT_TEAM = 8A4DL788W9;
 				ENABLE_PREVIEWS = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COURT_FOOTAGE_BUNDLE_ID)";
 			};
 			name = Debug;
 		};
@@ -184,10 +284,20 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 100000000000000000000018 /* CourtFootage.xcconfig */;
 			buildSettings = {
-				CURRENT_PROJECT_VERSION = "2 ti";
-				DEVELOPMENT_TEAM = 8A4DL788W9;
-				PRODUCT_BUNDLE_IDENTIFIER = courtfootage.oachimneumann.com;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COURT_FOOTAGE_BUNDLE_ID)";
 			};
+			name = Release;
+		};
+		10000000000000000000002E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 100000000000000000000034 /* CourtFootageWatch.xcconfig */;
+			buildSettings = {ENABLE_PREVIEWS = YES; };
+			name = Debug;
+		};
+		10000000000000000000002F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 100000000000000000000034 /* CourtFootageWatch.xcconfig */;
+			buildSettings = {};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
@@ -207,6 +317,15 @@
 			buildConfigurations = (
 				100000000000000000000014 /* Debug */,
 				100000000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		10000000000000000000002B /* Build configuration list for PBXNativeTarget "CourtFootageWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				10000000000000000000002E /* Debug */,
+				10000000000000000000002F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

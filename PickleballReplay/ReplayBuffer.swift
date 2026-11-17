@@ -3,14 +3,13 @@ import CoreGraphics
 import Foundation
 
 enum ReplayMediaSample: @unchecked Sendable {
-    typealias Buffer = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>
-
     enum Timing {
         case video(CMSampleTimingInfo, [CMSampleBuffer.PerSampleAttachmentsDictionary.Element])
         case audio(start: CMTime, sampleCount: Int)
     }
 
-    case memory(Buffer)
+    // Memory samples have an owned header that is never mutated after insertion.
+    case memory(CMSampleBuffer)
     case disk(ReplayDiskStorage.Location, CMFormatDescription, Timing)
 
     var formatDescription: CMFormatDescription? {
@@ -20,7 +19,7 @@ enum ReplayMediaSample: @unchecked Sendable {
         }
     }
 
-    func load(using reader: ReplayDiskStorage.Reader) throws -> Buffer {
+    func load(using reader: ReplayDiskStorage.Reader) throws -> CMSampleBuffer {
         switch self {
         case .memory(let buffer):
             return buffer
@@ -47,14 +46,8 @@ enum ReplayMediaSample: @unchecked Sendable {
                 )
             }
             guard status == noErr, let sample else { throw CocoaError(.fileReadCorruptFile) }
-            return Self.own(sample)
+            return sample
         }
-    }
-
-    // The caller owns the sample header and does not mutate it after handing it over.
-    static func own(_ sample: CMSampleBuffer) -> Buffer {
-        nonisolated(unsafe) let ownedSample = sample
-        return Buffer(unsafeBuffer: ownedSample)
     }
 }
 
@@ -121,11 +114,15 @@ final class ReplayBuffer: @unchecked Sendable {
         }
     }
 
-    func reset(settings: RecordingSettings) {
+    func reset(settings: RecordingSettings, videoBitrate: Int? = nil) {
         lock.withLock {
             self.settings = settings
             removeAllSamples()
-            diskStorage = settings.usesDiskReplayBuffer ? ReplayDiskStorage() : nil
+            // The encoder can briefly reach twice its average bitrate. Keep enough space for the leading GOP.
+            let maximumVideoBytes = videoBitrate.map {
+                Int64($0) * 2 * Int64(settings.clipDuration + settings.ignoredSeconds + 3) / 8
+            } ?? 0
+            diskStorage = settings.usesDiskReplayBuffer || maximumVideoBytes > Self.videoByteLimit ? ReplayDiskStorage() : nil
             storageFailed = false
         }
     }
@@ -304,7 +301,7 @@ final class ReplayBuffer: @unchecked Sendable {
             var copy: CMSampleBuffer?
             guard CMSampleBufferCreateCopy(allocator: nil, sampleBuffer: sample,
                                            sampleBufferOut: &copy) == noErr, let copy else { return nil }
-            return .memory(ReplayMediaSample.own(copy))
+            return .memory(copy)
         }
     }
 
@@ -329,7 +326,7 @@ final class ReplayBuffer: @unchecked Sendable {
             sampleCount: sample.numSamples, presentationTimeStamp: time,
             packetDescriptions: nil, sampleBufferOut: &copy
         ) == noErr, let copy else { return nil }
-        return (.memory(ReplayMediaSample.own(copy)), copy.duration)
+        return (.memory(copy), copy.duration)
     }
 
     private func store(_ payload: CMBlockBuffer, byteCount: Int,

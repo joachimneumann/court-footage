@@ -17,8 +17,9 @@
   <link rel="icon" type="image/png" href="/assets/app-icon.png">
   <link rel="apple-touch-icon" href="/assets/app-icon.png">
   <link rel="preload" href="/assets/barlow-condensed-bold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/styles.css?v=replay-demo">
-  <script src="/replay-demo.js" defer></script>
+  <link rel="preload" href="/assets/replay-court.webp" as="image" fetchpriority="high">
+  <link rel="stylesheet" href="/styles.css?v=rally-demo-local-2">
+  <script src="/replay-demo.js?v=rally-demo-local-2" defer></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -32,52 +33,116 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header container">
-    <a class="brand" href="/" aria-label="Court Footage home">
-      <img src="/assets/app-icon.png" alt="" width="38" height="38">
-      <span>Court Footage</span>
-    </a>
-    <nav class="site-nav" aria-label="Main navigation">
-      <a href="#how-it-works">How it works</a>
-      <a href="/privacy">Privacy</a>
-    </nav>
-  </header>
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div class="container hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">Court Footage for iPhone</p>
           <h1 id="hero-title">Instant replay <em>for court sports.</em></h1>
           <p class="hero-description">Court Footage is an iPhone app for saving your own highlights from pickleball, tennis, padel, and other court sports. Mount your phone courtside, then tap after a point to save the rally to Photos.</p>
-          <p class="release-price">Free. No in-app purchases.</p>
+          <p class="release-price">Free. No in-app purchases. <a class="text-link" href="https://github.com/joachimneumann/court-footage">Github</a></p>
           <div class="hero-actions">
-            <p class="launch-status">Coming soon</p>
-            <a class="text-link" href="https://github.com/joachimneumann/court-footage">Open source on GitHub <span aria-hidden="true">↗</span></a>
+            <a class="app-store-link" href="https://apps.apple.com/app/id6835100251">
+              <img src="/assets/download-on-the-app-store.png" alt="Download on the App Store" width="150" height="50">
+            </a>
+            <p class="android-status">Android app: not yet implemented</p>
           </div>
         </div>
         <figure class="camera-preview" data-replay-demo>
           <div class="phone phone-landscape">
             <div class="demo-stage">
-              <div class="demo-camera" data-demo-camera>
-                <img src="/assets/camera.webp?v=2" alt="Court Footage live camera showing a pickleball rally, the tap-to-record area, and zoom controls" width="2622" height="1206" fetchpriority="high">
-                <button class="demo-trigger" type="button" aria-label="Open the replay demo" aria-controls="replay-demo-screen" data-demo-trigger hidden></button>
-              </div>
-              <div class="demo-replay" id="replay-demo-screen" data-demo-replay hidden>
-                <img src="/assets/replay-court.webp" alt="Pickleball rally in the replay preview" width="1440" height="618" fetchpriority="low" decoding="async">
-                <p class="demo-replay-label">Replay preview</p>
-                <div class="demo-replay-actions">
-                  <button class="demo-replay-button" type="button" data-demo-play>Replay</button>
-                  <button type="button" data-demo-back>Back</button>
+              <div class="demo-panel demo-camera" data-demo-camera>
+                <video class="demo-media demo-live" src="/assets/pickleball-rally-v2.mp4" poster="/assets/replay-court.webp" preload="metadata" muted playsinline aria-label="Pickleball rally preview generated with AI" data-demo-live></video>
+                <button class="demo-trigger" type="button" aria-controls="replay-demo-saved" data-demo-trigger data-demo-enabled>
+                  <span data-demo-trigger-label>Tap to save replay</span>
+                </button>
+                <div class="demo-camera-controls" data-demo-enabled>
+                  <div class="demo-zoom" role="group" aria-label="Camera zoom">
+                    <button type="button" aria-label="Zoom 1 times" aria-pressed="true" data-demo-zoom="1">1×</button>
+                    <button type="button" aria-label="Zoom 2 times" aria-pressed="false" data-demo-zoom="2">2×</button>
+                    <button type="button" aria-label="Zoom 5 times" aria-pressed="false" data-demo-zoom="5">5×</button>
+                  </div>
+                  <button class="demo-button demo-gear" type="button" aria-label="Settings" aria-controls="replay-demo-settings" data-demo-open-settings>
+                    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M10 2h4l.5 3 1.4.6 2.5-1.8 2.8 2.8-1.8 2.5.6 1.4 3 .5v4l-3 .5-.6 1.4 1.8 2.5-2.8 2.8-2.5-1.8-1.4.6-.5 3h-4l-.5-3-1.4-.6-2.5 1.8-2.8-2.8 1.8-2.5-.6-1.4-3-.5v-4l3-.5.6-1.4-1.8-2.5 2.8-2.8 2.5 1.8 1.4-.6z" transform="translate(1 1) scale(.917)"></path>
+                      <circle cx="12" cy="12" r="3.2"></circle>
+                    </svg>
+                  </button>
                 </div>
+              </div>
+              <section class="demo-panel demo-settings" id="replay-demo-settings" aria-labelledby="replay-demo-settings-title" data-demo-settings hidden>
+                <header class="demo-settings-header">
+                  <h2 id="replay-demo-settings-title">Settings</h2>
+                  <button class="demo-button demo-done" type="button" data-demo-done>Done</button>
+                </header>
+                <div class="demo-settings-content" role="region" aria-label="Settings options" tabindex="0">
+                  <div class="demo-settings-groups">
+                    <div class="demo-settings-recording">
+                      <div class="demo-setting-card" role="group" aria-label="Clip timing">
+                        <div class="demo-setting-timing">
+                          <div class="demo-setting-value">
+                            <label for="replay-demo-length">Clip length</label>
+                            <div class="demo-setting-control">
+                              <output for="replay-demo-length" data-demo-duration>30 seconds</output>
+                              <span class="demo-setting-stepper" aria-hidden="true"><span>−</span><span>+</span></span>
+                            </div>
+                          </div>
+                          <input id="replay-demo-length" type="range" min="0" max="32" step="1" value="5" aria-valuetext="30 seconds" data-demo-length>
+                        </div>
+                        <div class="demo-setting-row">
+                          <div>Skip just before tapping <strong class="demo-setting-detail">2 Seconds</strong></div>
+                          <span class="demo-setting-stepper" aria-hidden="true"><span>−</span><span>+</span></span>
+                        </div>
+                      </div>
+                      <div class="demo-setting-card" role="group" aria-label="Camera capture">
+                        <div class="demo-setting-row">
+                          <span>Resolution</span>
+                          <span class="demo-setting-choice">1080p Full HD <span class="demo-setting-picker" aria-hidden="true"></span></span>
+                        </div>
+                        <div class="demo-setting-row">
+                          <span>Frame rate</span>
+                          <span class="demo-setting-choice">Maximum <span class="demo-setting-picker" aria-hidden="true"></span></span>
+                        </div>
+                        <label class="demo-setting-row">
+                          <span>Dim screen <span class="demo-setting-detail" id="replay-demo-dim-description">Dimming saves battery</span></span>
+                          <input class="demo-setting-switch" type="checkbox" role="switch" aria-label="Dim screen" aria-describedby="replay-demo-dim-description" disabled>
+                        </label>
+                        <label class="demo-setting-row">
+                          <span>Audio</span>
+                          <input class="demo-setting-switch" type="checkbox" role="switch" checked disabled>
+                        </label>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="demo-setting-card" role="group" aria-label="App information">
+                        <a class="demo-setting-row demo-setting-link" href="/privacy">Privacy <span class="demo-setting-disclosure" aria-hidden="true"></span></a>
+                        <div class="demo-setting-row">About Court Footage <span class="demo-setting-disclosure" aria-hidden="true"></span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <div class="demo-panel demo-saved" id="replay-demo-saved" data-demo-saved hidden>
+                <img class="demo-media demo-thumbnail" src="/assets/replay-court.webp" alt="" width="1440" height="618" data-demo-thumbnail>
+                <div class="demo-save-card">
+                  <p data-demo-saved-duration></p>
+                  <div class="demo-save-actions">
+                    <button class="demo-button demo-button-primary" type="button" aria-controls="replay-demo-screen" data-demo-play>Play video</button>
+                    <button class="demo-button" type="button" data-demo-next>Ready for next</button>
+                  </div>
+                </div>
+              </div>
+              <div class="demo-panel demo-replay" id="replay-demo-screen" data-demo-replay hidden>
+                <video class="demo-media demo-playback" src="/assets/pickleball-rally-v2.mp4" poster="/assets/replay-court.webp" preload="none" muted playsinline aria-label="Replay of the pickleball rally preview generated with AI" data-demo-video></video>
+                <button class="demo-button demo-close" type="button" data-demo-back>Close</button>
+                <button class="demo-button demo-again" type="button" data-demo-again hidden>Play again</button>
               </div>
             </div>
           </div>
+          <p class="demo-status" role="status" data-demo-status></p>
         </figure>
       </div>
     </section>
-    <section class="workflow container" id="how-it-works" aria-labelledby="workflow-title">
-      <p class="eyebrow">How it works</p>
-      <h2 id="workflow-title">Footage from your rallies</h2>
+    <section class="workflow container" id="how-it-works" aria-label="How Court Footage works">
       <ol class="steps">
         <li>
           <h3>Set up courtside</h3>
@@ -125,17 +190,5 @@
       <a class="text-link" href="/privacy">Read the privacy policy <span aria-hidden="true">↗</span></a>
     </section>
   </main>
-  <footer class="site-footer">
-    <div class="container footer-inner">
-      <a class="brand" href="/" aria-label="Court Footage home">
-        <img src="/assets/app-icon.png" alt="" width="38" height="38" loading="lazy">
-        <span>Court Footage</span>
-      </a>
-      <nav class="site-nav" aria-label="Footer navigation">
-        <a href="/privacy">Privacy</a>
-        <a href="mailto:joachim@joachimneumann.com">Contact Joachim Neumann</a>
-      </nav>
-    </div>
-  </footer>
 </body>
 </html>

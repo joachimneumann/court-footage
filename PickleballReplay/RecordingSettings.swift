@@ -12,6 +12,12 @@ struct RecordingSettings: Codable, Equatable, Sendable {
     var clipDuration = 30
     var ignoredSeconds = 2
     var quality = VideoQuality.fullHD
+    var savedFrameRate: VideoFrameRate?
+
+    var frameRate: VideoFrameRate {
+        get { savedFrameRate ?? .maximum }
+        set { savedFrameRate = newValue == .maximum ? nil : newValue }
+    }
     var usesDiskReplayBuffer: Bool { clipDuration > 60 }
 
     var clipDurationIndex: Int {
@@ -42,6 +48,34 @@ struct RecordingSettings: Codable, Equatable, Sendable {
     }
 }
 
+enum VideoFrameRate: Int32, Codable, CaseIterable, Sendable {
+    case maximum = 0
+    case fps24 = 24
+    case fps30 = 30
+    case fps60 = 60
+    case fps120 = 120
+    case fps240 = 240
+
+    var limit: Int32? { self == .maximum ? nil : rawValue }
+
+    func matches(_ rate: Double) -> Bool {
+        guard let limit else { return true }
+        return abs(rate - Double(limit)) <= max(0.05, Double(limit) * 0.0011)
+    }
+
+    func isSupported(in ranges: [ClosedRange<Double>]) -> Bool {
+        guard limit != nil, !ranges.isEmpty else { return true }
+        return supportedRate(in: ranges).map(matches) ?? false
+    }
+
+    func supportedRate(in ranges: [ClosedRange<Double>]) -> Double? {
+        guard let limit else { return ranges.map(\.upperBound).max() }
+        let target = Double(limit)
+        let upToTarget = ranges.filter { $0.lowerBound <= target }.map { min($0.upperBound, target) }
+        return upToTarget.max() ?? ranges.map(\.lowerBound).min()
+    }
+}
+
 enum VideoQuality: String, Codable, CaseIterable, Identifiable, Sendable {
     case hd, fullHD, ultraHD
 
@@ -55,16 +89,17 @@ enum VideoQuality: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var videoBitrate: Int {
-        switch self {
+    func videoBitrate(frameRate: Double) -> Int {
+        let bitrateAt30FPS: Int = switch self {
         case .hd: 3_500_000
         case .fullHD: 6_000_000
         case .ultraHD: 16_000_000
         }
+        return Int((Double(bitrateAt30FPS) * frameRate / 30).rounded())
     }
 
-    func estimatedBytes(durationSeconds: Int, includeAudio: Bool) -> Int64 {
+    func estimatedBytes(durationSeconds: Int, includeAudio: Bool, frameRate: Double = 30) -> Int64 {
         let audioBitrate = includeAudio ? RecordingSettings.audioBitrate : 0
-        return Int64(videoBitrate + audioBitrate) * Int64(durationSeconds) / 8
+        return Int64(videoBitrate(frameRate: frameRate) + audioBitrate) * Int64(durationSeconds) / 8
     }
 }

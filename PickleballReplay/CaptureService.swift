@@ -21,12 +21,14 @@ struct CameraControls: Sendable, Equatable {
     let zoom: CameraZoomState
     let canFlip: Bool
     let facingFront: Bool
+    let frameRate: Double?
+    let frameRateRanges: [VideoQuality: [ClosedRange<Double>]]
+    let frameRateLimitedByPressure: Bool
 }
 
 final class CaptureService: NSObject, @unchecked Sendable {
     let session = AVCaptureSession()
 
-    @MainActor private(set) var captureRotation = CGAffineTransform.identity
     @MainActor private weak var previewView: UIView?
     @MainActor private weak var previewWindow: UIWindow?
     @MainActor private var previewRevision = 0
@@ -34,12 +36,12 @@ final class CaptureService: NSObject, @unchecked Sendable {
     @MainActor private var directionCoordinator: AnyObject?
     @MainActor private var cameraDirectionsReady = false
     @MainActor private var previewRotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    @MainActor private var previewRotationObservation: NSKeyValueObservation?
 
     private let captureQueue = DispatchQueue(label: "PickleballReplay.Capture", qos: .userInitiated)
     private let outputQueue = DispatchQueue(label: "PickleballReplay.CaptureOutput", qos: .userInitiated)
     private let pendingVideo = DispatchSemaphore(value: 3)
     private let pendingAudio = DispatchSemaphore(value: 5)
+    private let onConfigured: @Sendable (RecordingSettings, Int) -> Void
     private let onVideo: @Sendable (CMSampleBuffer) -> Void
     private let onAudio: @Sendable (CMSampleBuffer) -> Void
     private let onInterruption: @Sendable () -> Void
@@ -62,15 +64,18 @@ final class CaptureService: NSObject, @unchecked Sendable {
     private var observers: [NSObjectProtocol] = []
     private var pressureObservation: NSKeyValueObservation?
     private var nominalFrameDuration = CMTime(value: 1, timescale: 30)
+    private var frameRateLimitedByPressure = false
     private var generation = 0
     private var running = false
 
     init(
+        onConfigured: @escaping @Sendable (RecordingSettings, Int) -> Void,
         onVideo: @escaping @Sendable (CMSampleBuffer) -> Void,
         onAudio: @escaping @Sendable (CMSampleBuffer) -> Void,
         onInterruption: @escaping @Sendable () -> Void,
         onCameraControls: @escaping @Sendable (CameraControls) -> Void = { _ in }
     ) {
+        self.onConfigured = onConfigured
         self.onVideo = onVideo
         self.onAudio = onAudio
         self.onInterruption = onInterruption
@@ -89,43 +94,43 @@ final class CaptureService: NSObject, @unchecked Sendable {
         previewWindow = window
         previewRevision += 1
         configurePreviewRotation()
-        if #available(iOS 27.1, *) {
-            let revision = previewRevision
-            cameraDirectionsReady = false
-            captureQueue.async { self.cameraDirections = nil }
-            directionCoordinator = AVCaptureDeviceDirectionCoordinator(
-                view: view,
-                deviceTypes: Self.cameraTypes
-            ) { [weak self, weak view] directions in
-                guard let self, let view, let window = view.window,
-                      self.previewRevision == revision,
-                      self.previewWindow === window else { return }
-                // AVKit reports the map on the main queue. Resolve devices on the capture queue.
-                self.updateCameraDirections(
-                    CameraDirections(
-                        back: Set(directions.backwardFacingDeviceDescriptors.map(\.uniqueID)),
-                        front: Set(directions.forwardFacingDeviceDescriptors.map(\.uniqueID))
-                    ),
-                    previewRevision: revision
-                )
-            }
+        directionCoordinator = nil
+        cameraDirectionsReady = false
+        captureQueue.async { self.cameraDirections = nil }
+        if AVCaptureDevice.authorizationStatus(for: .video) == .authorized { attachDirectionCoordinator() }
+    }
+
+    @MainActor
+    private func attachDirectionCoordinator() {
+        guard #available(iOS 27.1, *), Self.requiresCameraDirections,
+              directionCoordinator == nil, let view = previewView,
+              let window = view.window, previewWindow === window else { return }
+        let revision = previewRevision
+        directionCoordinator = AVCaptureDeviceDirectionCoordinator(
+            view: view,
+            deviceTypes: Self.cameraTypes
+        ) { [weak self, weak view] directions in
+            guard let self, let view, let window = view.window,
+                  self.previewRevision == revision,
+                  self.previewWindow === window else { return }
+            // AVKit reports the map on the main queue. Resolve devices on the capture queue.
+            self.updateCameraDirections(
+                CameraDirections(
+                    back: Set(directions.backwardFacingDeviceDescriptors.map(\.uniqueID)),
+                    front: Set(directions.forwardFacingDeviceDescriptors.map(\.uniqueID))
+                ),
+                previewRevision: revision
+            )
         }
     }
 
     @MainActor
     func start(
-        orientation: UIInterfaceOrientation,
         settings: RecordingSettings,
         facing: CameraFacing = .back
     ) async throws {
         try await waitForCameraDirections()
         try Task.checkCancellation()
-        let captureOrientation: AVCaptureVideoOrientation = switch orientation {
-        case .landscapeLeft: .landscapeLeft
-        case .landscapeRight: .landscapeRight
-        case .portraitUpsideDown: .portraitUpsideDown
-        default: .portrait
-        }
         let device: AVCaptureDevice = try await withCheckedThrowingContinuation { continuation in
             captureQueue.async {
                 do {
@@ -136,22 +141,55 @@ final class CaptureService: NSObject, @unchecked Sendable {
                 }
             }
         }
-        let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
-        let degrees = rotation.videoRotationAngleRelative(toDeviceOrientation: captureOrientation)
-        captureRotation = CGAffineTransform(rotationAngle: degrees * .pi / 180)
         previewCamera = device
         configurePreviewRotation()
     }
 
     @MainActor
+    func replayRotation(for orientation: UIDeviceOrientation) -> CGAffineTransform {
+        guard let previewCamera else { return .identity }
+        let coordinator = previewRotationCoordinator
+            ?? AVCaptureDevice.RotationCoordinator(device: previewCamera, previewLayer: nil)
+        let degrees: CGFloat
+        if #available(iOS 27.0, *) {
+            // UIKit names landscape by the device's top edge, so the capture cases are reversed.
+            let videoOrientation: AVCaptureVideoOrientation = switch orientation {
+            case .landscapeLeft: .landscapeRight
+            case .landscapeRight: .landscapeLeft
+            case .portraitUpsideDown: .portraitUpsideDown
+            default: .portrait
+            }
+            degrees = coordinator.videoRotationAngleRelative(toDeviceOrientation: videoOrientation)
+        } else if let layer = previewView?.layer as? AVCaptureVideoPreviewLayer,
+                  let connection = layer.connection {
+            // Use the fixed portrait preview as the reference for this camera's sensor.
+            let offset: CGFloat = switch orientation {
+            case .landscapeLeft: -90
+            case .landscapeRight: 90
+            case .portraitUpsideDown: 180
+            default: 0
+            }
+            degrees = (connection.videoRotationAngle + offset).truncatingRemainder(dividingBy: 360)
+        } else {
+            degrees = coordinator.videoRotationAngleForHorizonLevelCapture
+        }
+        return CGAffineTransform(rotationAngle: degrees * .pi / 180)
+    }
+
+    @MainActor
     private func waitForCameraDirections() async throws {
-        guard #available(iOS 27.1, *) else { return }
+        guard Self.requiresCameraDirections else { return }
+        attachDirectionCoordinator()
         let clock = ContinuousClock()
         let deadline = clock.now + .seconds(2)
         // AVKit announces the first map asynchronously. Keep startup cancelable while
         // the current preview attaches and its camera map reaches the capture queue.
         while !cameraDirectionsReady || previewView?.window == nil || previewView?.window !== previewWindow {
-            guard clock.now < deadline else { throw CaptureError.cameraDirectionsUnavailable }
+            guard clock.now < deadline else {
+                // Recreate the coordinator if the user retries after a missed initial callback.
+                directionCoordinator = nil
+                throw CaptureError.cameraDirectionsUnavailable
+            }
             try await clock.sleep(until: min(deadline, clock.now + .milliseconds(20)))
         }
     }
@@ -193,26 +231,24 @@ final class CaptureService: NSObject, @unchecked Sendable {
 
     @MainActor
     private func configurePreviewRotation() {
-        previewRotationObservation = nil
-        previewRotationCoordinator = nil
-        guard let layer = previewView?.layer as? AVCaptureVideoPreviewLayer,
-              let previewCamera else { return }
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: previewCamera, previewLayer: layer)
-        previewRotationCoordinator = coordinator
-        updatePreviewRotation()
-        previewRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview) {
-            [weak self] _, _ in
-            Task { @MainActor in self?.updatePreviewRotation() }
+        let layer = previewView?.layer as? AVCaptureVideoPreviewLayer
+        previewRotationCoordinator = previewCamera.map {
+            AVCaptureDevice.RotationCoordinator(device: $0, previewLayer: layer)
         }
+        updatePreviewRotation()
     }
 
     @MainActor
     private func updatePreviewRotation() {
         guard let layer = previewView?.layer as? AVCaptureVideoPreviewLayer,
               let connection = layer.connection,
-              let degrees = previewRotationCoordinator?.videoRotationAngleForHorizonLevelPreview,
-              connection.isVideoRotationAngleSupported(degrees) else { return }
-        connection.videoRotationAngle = degrees
+              let coordinator = previewRotationCoordinator else { return }
+        if #available(iOS 27.0, *) {
+            let degrees = coordinator.videoRotationAngleRelative(toDeviceOrientation: .portrait)
+            if connection.isVideoRotationAngleSupported(degrees) { connection.videoRotationAngle = degrees }
+        } else if connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
         if connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored = false
@@ -236,13 +272,23 @@ final class CaptureService: NSObject, @unchecked Sendable {
         }
     }
 
+    private static let requiresCameraDirections: Bool = {
+        guard #available(iOS 27.1, *) else { return false }
+        // The Duo's cameras can face different directions as its displays move.
+        return !AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInOuterUltraWideCamera, .builtInInnerUltraWideCamera],
+            mediaType: .video,
+            position: .unspecified
+        ).devices.isEmpty
+    }()
+
     private static var cameraTypes: [AVCaptureDevice.DeviceType] {
         var types: [AVCaptureDevice.DeviceType] = [
             .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera,
             .builtInTrueDepthCamera, .builtInWideAngleCamera,
             .builtInUltraWideCamera, .builtInTelephotoCamera
         ]
-        if #available(iOS 27.1, *) {
+        if #available(iOS 27.1, *), requiresCameraDirections {
             types += [.builtInOuterUltraWideCamera, .builtInInnerUltraWideCamera]
         }
         return types
@@ -267,7 +313,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
 
     private func availableCameras(facing: CameraFacing) -> [AVCaptureDevice] {
         let cameraTypes = Self.cameraTypes
-        if #available(iOS 27.1, *) {
+        if Self.requiresCameraDirections {
             guard let cameraDirections else { return [] }
             let discovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: cameraTypes, mediaType: .video, position: .unspecified
@@ -287,7 +333,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
 
     private func startCapture(settings: RecordingSettings, facing: CameraFacing) throws -> AVCaptureDevice {
         if running, let camera { return camera }
-        if #available(iOS 27.1, *), cameraDirections == nil {
+        if Self.requiresCameraDirections, cameraDirections == nil {
             throw CaptureError.cameraDirectionsUnavailable
         }
         let candidates = availableCameras(facing: facing)
@@ -308,8 +354,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
 
         let audio = settings.audioEnabled ? try makeAudioCapture() : nil
         try configureSession(videoInput: videoInput, video: video, audio: audio, quality: settings.quality)
-        try configureCamera(selectedCamera)
-        encoder = try makeEncoder(quality: settings.quality)
+        try prepareCamera(selectedCamera, settings: settings)
         camera = selectedCamera
         self.facing = facing
         activeQuality = settings.quality
@@ -317,6 +362,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
         audioOutput = audio?.output
         generation += 1
         installObservers(for: generation, camera: selectedCamera, audioEnabled: settings.audioEnabled)
+        onConfigured(settings, settings.quality.videoBitrate(frameRate: 1 / nominalFrameDuration.seconds))
 
         session.startRunning()
         guard session.isRunning, let clock = session.synchronizationClock else {
@@ -374,9 +420,92 @@ final class CaptureService: NSObject, @unchecked Sendable {
         }
     }
 
-    private func configureCamera(_ camera: AVCaptureDevice) throws {
+    private struct CaptureMode {
+        let format: AVCaptureDevice.Format
+        let frameDuration: CMTime
+    }
+
+    private func compatibleFormats(for camera: AVCaptureDevice, quality: VideoQuality) -> [AVCaptureDevice.Format] {
+        let (width, height) = quality.captureDimensions
+        return camera.formats.filter { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return dimensions.width == width && dimensions.height == height
+                && format.supportedColorSpaces.contains(.sRGB)
+                && !format.unsupportedCaptureOutputClasses.contains { $0 == AVCaptureVideoDataOutput.self }
+        }
+    }
+
+    private func captureModes(for camera: AVCaptureDevice, settings: RecordingSettings) -> [CaptureMode] {
+        let active = camera.activeFormat
+        let compatible = compatibleFormats(for: camera, quality: settings.quality).filter { $0 !== active }
+        let standardDurations = VideoFrameRate.allCases.compactMap(\.limit).map { CMTime(value: 1, timescale: $0) }
+        let pressureLimit: Int32? = frameRateLimitedByPressure ? 24 : nil
+        let rateLimit = [settings.frameRate.limit, pressureLimit].compactMap { $0 }.min()
+            .map { CMTime(value: 1, timescale: $0) }
+        let modes = ([active] + compatible).flatMap { format in
+            format.videoSupportedFrameRateRanges.flatMap { range in
+                ([range.minFrameDuration, range.maxFrameDuration] + standardDurations)
+                    .filter { $0.isNumeric && $0 > .zero && $0 >= range.minFrameDuration && $0 <= range.maxFrameDuration }
+                    .map { CaptureMode(format: format, frameDuration: $0) }
+            }
+        }
+        return modes.sorted { first, second in
+            if first.frameDuration == second.frameDuration { return first.format === active && second.format !== active }
+            if let rateLimit {
+                let firstWithinLimit = first.frameDuration >= rateLimit
+                let secondWithinLimit = second.frameDuration >= rateLimit
+                if firstWithinLimit != secondWithinLimit { return firstWithinLimit }
+                if !firstWithinLimit { return first.frameDuration > second.frameDuration }
+            }
+            return first.frameDuration < second.frameDuration
+        }
+    }
+
+    private func availableFrameRateRanges(for camera: AVCaptureDevice) -> [VideoQuality: [ClosedRange<Double>]] {
+        Dictionary(uniqueKeysWithValues: VideoQuality.allCases.map { quality in
+            var formats = compatibleFormats(for: camera, quality: quality)
+            if quality == activeQuality { formats.append(camera.activeFormat) }
+            let ranges = formats.flatMap(\.videoSupportedFrameRateRanges).compactMap { range -> ClosedRange<Double>? in
+                guard range.minFrameRate.isFinite, range.maxFrameRate.isFinite,
+                      range.minFrameRate > 0, range.minFrameRate <= range.maxFrameRate else { return nil }
+                return range.minFrameRate...range.maxFrameRate
+            }
+            return (quality, ranges)
+        })
+    }
+
+    private func prepareCamera(_ camera: AVCaptureDevice, settings: RecordingSettings) throws {
+        let pressure = camera.systemPressureState.level
+        frameRateLimitedByPressure = pressure == .serious || pressure == .critical
+        var lastDuration: CMTime?
+        for mode in captureModes(for: camera, settings: settings) {
+            guard lastDuration != mode.frameDuration else { continue }
+            lastDuration = mode.frameDuration
+            let preferredCodec = mode.frameDuration < CMTime(value: 1, timescale: 60)
+                ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
+            let prepared = (try? makeEncoder(quality: settings.quality, duration: mode.frameDuration, codec: preferredCodec))
+                ?? (preferredCodec == kCMVideoCodecType_HEVC
+                    ? try? makeEncoder(quality: settings.quality, duration: mode.frameDuration, codec: kCMVideoCodecType_H264)
+                    : nil)
+            guard let prepared else { continue }
+            do {
+                try configureCamera(camera, mode: mode)
+            } catch {
+                VTCompressionSessionInvalidate(prepared)
+                throw error
+            }
+            encoder = prepared
+            return
+        }
+        throw CaptureError.couldNotEncode(settings.quality)
+    }
+
+    private func configureCamera(_ camera: AVCaptureDevice, mode: CaptureMode) throws {
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
         try camera.lockForConfiguration()
         defer { camera.unlockForConfiguration() }
+        if camera.activeFormat !== mode.format { camera.activeFormat = mode.format }
         if camera.isFocusModeSupported(.continuousAutoFocus) {
             camera.focusMode = .continuousAutoFocus
         }
@@ -386,14 +515,13 @@ final class CaptureService: NSObject, @unchecked Sendable {
         if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
             camera.whiteBalanceMode = .continuousAutoWhiteBalance
         }
+        if camera.isLowLightBoostSupported {
+            camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+        }
         if camera.activeFormat.supportedColorSpaces.contains(.sRGB) {
             camera.activeColorSpace = .sRGB
         }
-        if camera.isAutoVideoFrameRateEnabled {
-            camera.isAutoVideoFrameRateEnabled = false
-        }
-        nominalFrameDuration = CMTime(value: 1, timescale: 30)
-        setFrameRate(30, onLockedCamera: camera)
+        setFrameDuration(mode.frameDuration, onLockedCamera: camera)
         camera.videoZoomFactor = camera.minAvailableVideoZoomFactor
     }
 
@@ -456,21 +584,26 @@ final class CaptureService: NSObject, @unchecked Sendable {
                                   maximum: Double(range.upperBound * multiplier),
                                   presets: presets),
             canFlip: canFlip,
-            facingFront: facing == .front
+            facingFront: facing == .front,
+            frameRate: 1 / nominalFrameDuration.seconds,
+            frameRateRanges: lastControls?.frameRateRanges ?? availableFrameRateRanges(for: camera),
+            frameRateLimitedByPressure: frameRateLimitedByPressure
         )
         guard controls != lastControls else { return }
         lastControls = controls
         onCameraControls(controls)
     }
 
-    private func setFrameRate(_ rate: Int32, onLockedCamera camera: AVCaptureDevice) {
-        let supported = camera.activeFormat.videoSupportedFrameRateRanges.contains {
-            $0.minFrameRate <= Double(rate) && Double(rate) <= $0.maxFrameRate
+    private func setFrameDuration(_ duration: CMTime, onLockedCamera camera: AVCaptureDevice) {
+        if camera.isAutoVideoFrameRateEnabled {
+            camera.isAutoVideoFrameRateEnabled = false
         }
-        guard supported else { return }
-        let frameDuration = CMTime(value: 1, timescale: rate)
-        camera.activeVideoMinFrameDuration = frameDuration
-        nominalFrameDuration = frameDuration
+        if duration > camera.activeVideoMaxFrameDuration {
+            camera.activeVideoMaxFrameDuration = duration
+        }
+        camera.activeVideoMinFrameDuration = duration
+        camera.activeVideoMaxFrameDuration = duration
+        nominalFrameDuration = duration
     }
 
     private func installObservers(for generation: Int, camera: AVCaptureDevice, audioEnabled: Bool) {
@@ -481,24 +614,51 @@ final class CaptureService: NSObject, @unchecked Sendable {
             })
         }
         if audioEnabled {
-            observers.append(center.addObserver(
-                forName: AVAudioSession.didBecomeInactiveNotification, object: nil, queue: nil
-            ) { [weak self] notification in
-                guard let context = notification.userInfo?[AVAudioSession.deactivationContextKey]
-                        as? AVAudioSession.DeactivationContext,
-                      context.source == .system else { return }
-                self?.handleInterruption(generation: generation)
-            })
+            if #available(iOS 27.0, *) {
+                observers.append(center.addObserver(
+                    forName: AVAudioSession.didBecomeInactiveNotification, object: nil, queue: nil
+                ) { [weak self] notification in
+                    guard let context = notification.userInfo?[AVAudioSession.deactivationContextKey]
+                            as? AVAudioSession.DeactivationContext,
+                          context.source == .system else { return }
+                    self?.handleInterruption(generation: generation)
+                })
+            } else {
+                observers.append(center.addObserver(
+                    forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
+                ) { [weak self] notification in
+                    guard let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                          type == AVAudioSession.InterruptionType.began.rawValue else { return }
+                    self?.handleInterruption(generation: generation)
+                })
+            }
         }
         pressureObservation = camera.observe(\.systemPressureState, options: [.new]) { [weak self] _, change in
             guard let pressure = change.newValue?.level else { return }
             self?.captureQueue.async { [weak self] in
                 guard let self, self.generation == generation, let camera = self.camera, self.running else { return }
                 if pressure == .serious || pressure == .critical {
+                    self.frameRateLimitedByPressure = true
+                    let target = CMTime(value: 1, timescale: 24)
+                    let ranges = camera.activeFormat.videoSupportedFrameRateRanges
+                    let fallback = ranges.contains { $0.minFrameDuration <= target && target <= $0.maxFrameDuration }
+                        ? target : ranges.map(\.maxFrameDuration).max()
+                    guard let fallback, fallback > self.nominalFrameDuration else {
+                        self.publishCameraControls(for: camera)
+                        return
+                    }
                     do {
                         try camera.lockForConfiguration()
-                        self.setFrameRate(24, onLockedCamera: camera)
+                        self.setFrameDuration(fallback, onLockedCamera: camera)
                         camera.unlockForConfiguration()
+                        if let encoder = self.encoder, let quality = self.activeQuality {
+                            let frameRate = 1 / fallback.seconds
+                            let bitrate = quality.videoBitrate(frameRate: frameRate)
+                            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: frameRate as CFNumber)
+                            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
+                            self.setEncoderDataRateLimit(encoder, bitrate: bitrate)
+                        }
+                        self.publishCameraControls(for: camera)
                     } catch {
                         // AVFoundation reports a session interruption if capture can't continue.
                     }
@@ -558,6 +718,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
             session.commitConfiguration()
         }
         camera = nil
+        frameRateLimitedByPressure = false
         activeQuality = nil
         canFlip = false
         lastControls = nil
@@ -566,11 +727,11 @@ final class CaptureService: NSObject, @unchecked Sendable {
         audioFormat = nil
     }
 
-    private func makeEncoder(quality: VideoQuality) throws -> VTCompressionSession {
+    private func makeEncoder(quality: VideoQuality, duration: CMTime, codec: CMVideoCodecType) throws -> VTCompressionSession {
         let (width, height) = quality.captureDimensions
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
-            allocator: nil, width: width, height: height, codecType: kCMVideoCodecType_H264,
+            allocator: nil, width: width, height: height, codecType: codec,
             encoderSpecification: [
                 kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: true
             ] as CFDictionary,
@@ -579,15 +740,17 @@ final class CaptureService: NSObject, @unchecked Sendable {
         )
         guard status == noErr, let session else { throw CaptureError.couldNotEncode(quality) }
 
-        let bitrate = quality.videoBitrate
+        let frameRate = 1 / duration.seconds
+        let bitrate = quality.videoBitrate(frameRate: frameRate)
         let settings: [String: Any] = [
             kVTCompressionPropertyKey_RealTime as String: true,
             kVTCompressionPropertyKey_AllowFrameReordering as String: false,
-            kVTCompressionPropertyKey_ExpectedFrameRate as String: 30,
-            kVTCompressionPropertyKey_MaxKeyFrameInterval as String: 30,
+            kVTCompressionPropertyKey_ExpectedFrameRate as String: frameRate,
+            kVTCompressionPropertyKey_MaxKeyFrameInterval as String: Int(frameRate.rounded(.up)),
             kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration as String: 1.0,
             kVTCompressionPropertyKey_AverageBitRate as String: bitrate,
-            kVTCompressionPropertyKey_ProfileLevel as String: kVTProfileLevel_H264_Main_AutoLevel
+            kVTCompressionPropertyKey_ProfileLevel as String: codec == kCMVideoCodecType_HEVC
+                ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_Main_AutoLevel
         ]
         guard VTSessionSetProperties(session, propertyDictionary: settings as CFDictionary) == noErr else {
             VTCompressionSessionInvalidate(session)
@@ -596,15 +759,16 @@ final class CaptureService: NSObject, @unchecked Sendable {
         // Older encoders can omit optional properties. The ring has an independent memory limit.
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowOpenGOP, value: kCFBooleanFalse)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 2 as CFNumber)
-        VTSessionSetProperty(
-            session, key: kVTCompressionPropertyKey_DataRateLimits,
-            value: [bitrate / 8 * 2, 1] as CFArray
-        )
+        setEncoderDataRateLimit(session, bitrate: bitrate)
         guard VTCompressionSessionPrepareToEncodeFrames(session) == noErr else {
             VTCompressionSessionInvalidate(session)
             throw CaptureError.couldNotEncode(quality)
         }
         return session
+    }
+
+    private func setEncoderDataRateLimit(_ encoder: VTCompressionSession, bitrate: Int) {
+        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_DataRateLimits, value: [bitrate / 8 * 2, 1] as CFArray)
     }
 
     private struct MediaSample: @unchecked Sendable {
@@ -656,7 +820,7 @@ final class CaptureService: NSObject, @unchecked Sendable {
             case .noCamera: "The selected camera is unavailable."
             case .noMicrophone: "The microphone is unavailable."
             case .couldNotStart: "The camera couldn't start. Try again."
-            case .cameraDirectionsUnavailable: "The camera preview isn’t ready. Try again."
+            case .cameraDirectionsUnavailable: "The camera preview isn’t ready."
             case .unsupportedQuality(let quality):
                 "This camera doesn’t support \(quality.captureResolution). Choose a different video quality in Settings."
             case .couldNotEncode(let quality):

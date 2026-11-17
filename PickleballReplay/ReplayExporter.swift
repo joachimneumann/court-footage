@@ -49,28 +49,16 @@ enum ReplayExporter {
                                        sourceFormatHint: videoFormat)
         video.transform = snapshot.rotation
         guard writer.canAdd(video) else { throw ExportError.unsupportedFormat }
-        let videoReceiver = writer.inputReceiver(for: video)
-        let audioReceiver = try makeAudioReceiver(for: snapshot, writer: writer)
+        let audio = try makeAudioInput(for: snapshot)
         do {
-            try writer.start()
-            // MOV uses this source-time interval as the playable edit while still
-            // giving the decoder access to the GOP preceding the start.
-            writer.startSession(atSourceTime: snapshot.start)
-            if let audioReceiver {
-                async let videoWrite: Void = writeSamples(snapshot.video, to: videoReceiver)
-                async let audioWrite: Void = writeSamples(snapshot.audio, to: audioReceiver)
-                do {
-                    _ = try await (videoWrite, audioWrite)
-                } catch {
-                    // Release a sibling waiting for writer capacity before joining it.
-                    if writer.status == .writing {
-                        writer.cancelWriting()
-                    }
-                    throw error
-                }
+            if #available(iOS 26.0, *) {
+                try await writeWithReceivers(snapshot, writer: writer, video: video, audio: audio)
             } else {
-                try await writeSamples(snapshot.video, to: videoReceiver)
+                try await writeWithInputs(snapshot, writer: writer, video: video, audio: audio)
             }
+            try Task.checkCancellation()
+            // MOV uses the source-time interval as the playable edit and retains
+            // the preceding keyframe for decoding when the clip starts mid-GOP.
             writer.endSession(atSourceTime: snapshot.end)
             await writer.finishWriting()
             guard writer.status == .completed else { throw writer.error ?? ExportError.unfinishedFile }
@@ -83,14 +71,12 @@ enum ReplayExporter {
         }
     }
 
-    private static func makeAudioReceiver(
-        for snapshot: ReplaySnapshot, writer: AVAssetWriter
-    ) throws -> sending AVAssetWriterInput.SampleBufferReceiver? {
+    private static func makeAudioInput(for snapshot: ReplaySnapshot) throws -> AVAssetWriterInput? {
         guard let firstAudio = snapshot.audio.first else { return nil }
         guard let audioFormat = firstAudio.formatDescription,
               let audioStream = CMAudioFormatDescriptionGetStreamBasicDescription(audioFormat)?.pointee
         else { throw ExportError.unsupportedFormat }
-        let audio = AVAssetWriterInput(
+        return AVAssetWriterInput(
             mediaType: .audio,
             outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -100,10 +86,38 @@ enum ReplayExporter {
             ],
             sourceFormatHint: audioFormat
         )
-        guard writer.canAdd(audio) else { throw ExportError.unsupportedFormat }
-        return writer.inputReceiver(for: audio)
     }
 
+    @available(iOS 26.0, *)
+    private static func writeWithReceivers(
+        _ snapshot: ReplaySnapshot, writer: AVAssetWriter, video: AVAssetWriterInput, audio: AVAssetWriterInput?
+    ) async throws {
+        let videoReceiver = writer.inputReceiver(for: video)
+        let audioReceiver: AVAssetWriterInput.SampleBufferReceiver?
+        if let audio {
+            guard writer.canAdd(audio) else { throw ExportError.unsupportedFormat }
+            audioReceiver = writer.inputReceiver(for: audio)
+        } else {
+            audioReceiver = nil
+        }
+        try writer.start()
+        writer.startSession(atSourceTime: snapshot.start)
+        if let audioReceiver {
+            async let videoWrite: Void = writeSamples(snapshot.video, to: videoReceiver)
+            async let audioWrite: Void = writeSamples(snapshot.audio, to: audioReceiver)
+            do {
+                _ = try await (videoWrite, audioWrite)
+            } catch {
+                // Release a sibling waiting for writer capacity before joining it.
+                if writer.status == .writing { writer.cancelWriting() }
+                throw error
+            }
+        } else {
+            try await writeSamples(snapshot.video, to: videoReceiver)
+        }
+    }
+
+    @available(iOS 26.0, *)
     private static func writeSamples(
         _ samples: [ReplayMediaSample], to receiver: sending AVAssetWriterInput.SampleBufferReceiver
     ) async throws {
@@ -111,7 +125,44 @@ enum ReplayExporter {
         let reader = ReplayDiskStorage.Reader()
         for sample in samples {
             try Task.checkCancellation()
-            try await receiver.append(sample.load(using: reader))
+            nonisolated(unsafe) let buffer = try sample.load(using: reader)
+            try await receiver.append(CMReadySampleBuffer(unsafeBuffer: buffer))
+        }
+    }
+
+    private static func writeWithInputs(
+        _ snapshot: ReplaySnapshot, writer: AVAssetWriter, video: AVAssetWriterInput, audio: AVAssetWriterInput?
+    ) async throws {
+        writer.add(video)
+        var tracks = [(input: video, samples: snapshot.video[...])]
+        if let audio {
+            guard writer.canAdd(audio) else { throw ExportError.unsupportedFormat }
+            writer.add(audio)
+            tracks.append((input: audio, samples: snapshot.audio[...]))
+        }
+        guard writer.startWriting() else { throw writer.error ?? ExportError.unfinishedFile }
+        writer.startSession(atSourceTime: snapshot.start)
+
+        let reader = ReplayDiskStorage.Reader()
+        while !tracks.isEmpty {
+            try Task.checkCancellation()
+            guard writer.status == .writing else { throw writer.error ?? ExportError.unfinishedFile }
+            var madeProgress = false
+            // Give both tracks a chance to write so neither blocks the other while interleaving.
+            for index in tracks.indices.reversed() {
+                let input = tracks[index].input
+                guard input.isReadyForMoreMediaData, let sample = tracks[index].samples.first else { continue }
+                guard input.append(try sample.load(using: reader)) else {
+                    throw writer.error ?? ExportError.unfinishedFile
+                }
+                madeProgress = true
+                tracks[index].samples.removeFirst()
+                if tracks[index].samples.isEmpty {
+                    input.markAsFinished()
+                    tracks.remove(at: index)
+                }
+            }
+            if !madeProgress { try await Task.sleep(for: .milliseconds(5)) }
         }
     }
 }
